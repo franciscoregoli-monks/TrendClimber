@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.csv
+.streamlit/
+web/node_modules/
+web/.next/
+web/.env.local
