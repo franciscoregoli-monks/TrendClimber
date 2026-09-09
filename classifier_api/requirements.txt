@@ -5,3 +5,5 @@ numpy>=1.26.0
 pytrends>=4.9.0
 scipy>=1.10.0
 urllib3<2
+python-dotenv>=1.0.0
+google-generativeai>=0.8.0

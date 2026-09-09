@@ -83,6 +83,7 @@ def classify(req: ClassifyRequest):
 
     return ClassifyResponse(
         trend=trend,
+        keywords=keywords,
         tipo=tipo,
         estadio=lifecycle.stage,
         confianza=lifecycle.confidence,

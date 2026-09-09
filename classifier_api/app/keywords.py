@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import os
 import re
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 KEYWORD_PROMPT = """Eres un analista de tendencias digitales y marketing cultural.
 

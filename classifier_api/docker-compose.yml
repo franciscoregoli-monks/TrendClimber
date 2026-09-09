@@ -6,6 +6,7 @@ services:
       - "8080:8000"
     environment:
       PORT: "8000"
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
     restart: unless-stopped
     healthcheck:
       test:
