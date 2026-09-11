@@ -14,6 +14,7 @@ CACHE_TTL_S = 900
 CACHE_STALE_TTL_S = 6 * 3600
 MAX_INTEREST_RETRIES = 2
 RATE_LIMIT_RETRY_DELAYS = (8.0, 20.0)
+MAX_DAILY_RANGE_DAYS = 269
 
 _interest_cache: dict[str, tuple[float, pd.DataFrame]] = {}
 _related_cache: dict[str, tuple[float, dict[str, list[dict[str, str | int]]]]] = {}
@@ -21,7 +22,7 @@ _related_cache: dict[str, tuple[float, dict[str, list[dict[str, str | int]]]]] =
 
 def _default_timeframe(days: int = 90) -> str:
     end = datetime.now()
-    start = end - timedelta(days=min(days, 269))
+    start = end - timedelta(days=min(days, MAX_DAILY_RANGE_DAYS))
     return f"{start.strftime('%Y-%m-%d')} {end.strftime('%Y-%m-%d')}"
 
 
@@ -126,11 +127,13 @@ def fetch_multi_window_curves(
     end_str = end.strftime("%Y-%m-%d")
     start_30 = end - timedelta(days=29)
     start_7 = end - timedelta(days=6)
-    start_year = end - timedelta(days=364)
+    # Trends agrega por semana si el rango supera ~270 días; las ventanas 30D/7D
+    # y el clasificador necesitan puntos diarios.
+    start_year = end - timedelta(days=MAX_DAILY_RANGE_DAYS)
 
     tf_year = f"{start_year.strftime('%Y-%m-%d')} {end_str}"
 
-    # Una sola llamada a Trends (1Y) y recortamos ventanas 30D / 7D localmente.
+    # Una sola llamada a Trends y recortamos ventanas 30D / 7D localmente.
     data_year = fetch_interest_over_time(keywords, geo=geo, timeframe=tf_year, hl=hl)
     series_year = _trim_until_date(_sum_series(data_year), end)
     series_30 = series_year[series_year.index >= pd.Timestamp(start_30)]

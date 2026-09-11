@@ -49,8 +49,8 @@ export function TrendResults({ result, title, geo = "ES" }: TrendResultsProps) {
     <div ref={resultsRef} className="space-y-4">
       {result.demoMode && (
         <div className="rounded-2xl border border-amber-200/80 bg-amber-50/90 px-4 py-3 text-sm text-amber-950">
-          Modo demo: Google Trends no respondió (rate limit). Mostramos una curva sintética
-          para que puedas probar el flujo completo.
+          Modo demo: no se pudieron obtener datos de Google Trends. Mostramos una curva
+          sintética para que puedas probar el flujo completo.
         </div>
       )}
       <SimplifiedModelsBar result={result} />

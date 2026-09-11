@@ -52,28 +52,6 @@ class BrandStrategyRequest(BaseModel):
     analyze: dict
 
 
-def _merge_keywords(
-    ai_keywords: list[str],
-    extra: list[str],
-    related: list[str] | None = None,
-    max_count: int = 5,
-) -> list[str]:
-    seen: set[str] = set()
-    merged: list[str] = []
-    for kw in list(extra) + list(related or []) + list(ai_keywords):
-        normalized = kw.strip()
-        if not normalized:
-            continue
-        key = normalized.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        merged.append(normalized)
-        if len(merged) >= max_count:
-            break
-    return merged
-
-
 @app.get("/health")
 def health():
     return {"status": "ok"}
@@ -93,65 +71,87 @@ def suggested_trends(geo: str = "", limit: int = 12):
     try:
         trends = fetch_suggested_trends(geo=geo, limit=limit)
         return {"trends": trends, "geo": geo, "count": len(trends)}
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e)) from e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al obtener trends sugeridas: {e}") from e
+    except Exception:
+        country = geo or "AR"
+        fallback = [
+            ("farmear aura", "Identidad, estética y status simbólico en comunidades online."),
+            ("agentes de IA autónomos", "Software capaz de planificar y ejecutar tareas con mínima supervisión."),
+            ("lujo silencioso", "Consumo premium basado en calidad, diseño sobrio y señales discretas."),
+            ("wellness stacking", "Combinación de hábitos de bienestar en rutinas integradas."),
+            ("slow travel", "Viajes de mayor duración centrados en experiencias locales."),
+            ("social search", "Uso de plataformas sociales como motor de descubrimiento y búsqueda."),
+        ][: max(1, min(limit, 6))]
+        trends = [
+            {
+                "trend": trend,
+                "trendDescription": description,
+                "trendSource": "local-fallback",
+                "trendSignal": "rising",
+                "country": country,
+                "language": "Spanish",
+                "loadDate": None,
+                "ingestedAt": None,
+                "urls": [],
+                "metrics": [],
+            }
+            for trend, description in fallback
+        ]
+        return {"trends": trends, "geo": geo, "count": len(trends)}
 
 
 @app.post("/analyze")
 def analyze(req: AnalyzeRequest):
+    seed = req.title.strip()
+    manual = [k.strip() for k in req.extraKeywords if k.strip()]
+    related_raw: dict[str, list] = {"top": [], "rising": []}
+    related_note = ""
+
+    # 1. Obtener búsquedas relacionadas reales de Google Trends para el término semilla
     try:
-        keywords, reasoning = generate_keywords(req.title, req.description, geo=req.geo)
+        related_raw = fetch_related_queries(seed, geo=req.geo)
+        related_terms = extract_related_terms(related_raw)
+        if related_terms:
+            related_note = (
+                f" Related queries (Trends) para «{seed}»: {', '.join(related_terms)}."
+            )
+    except Exception as e:
+        related_terms = []
+        related_note = f" Related queries no disponibles: {e}"
+
+    # 2. Generación/selección de las 3 keywords definitivas con Gemini a partir de datos reales
+    try:
+        keywords, reasoning = generate_keywords(
+            req.title,
+            req.description,
+            geo=req.geo,
+            extra=manual,
+            related_terms=related_terms,
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al generar keywords: {e}") from e
 
-    manual = [k.strip() for k in req.extraKeywords if k.strip()]
-    seed = manual[0] if manual else keywords[0]
-
-    keywords = _merge_keywords(keywords, manual, [])
-    if manual:
-        reasoning = (
-            f"{reasoning} Keywords manuales incluidas: {', '.join(manual)}."
-        )
+    if related_note and "Related queries" not in reasoning:
+        reasoning = f"{reasoning}{related_note}"
     if not keywords:
         raise HTTPException(status_code=400, detail="Se requiere al menos una keyword.")
 
+    # 3. Consulta consolidada a Google Trends para las 3 keywords finales
     demo_mode = False
     try:
         timeline, classify_data, data_until, series_by_window = fetch_multi_window_curves(
             keywords, geo=req.geo
         )
-    except ValueError as e:
-        if "rate limit" in str(e).lower() or "429" in str(e).lower():
-            timeline, classify_data, data_until, series_by_window = build_demo_multi_window(
-                keywords, geo=req.geo
-            )
-            demo_mode = True
-            reasoning = (
-                f"{reasoning} Modo demo: Google Trends no disponible — curva sintética basada en el patrón viral."
-            )
-        else:
-            raise HTTPException(status_code=502, detail=str(e)) from e
     except Exception as e:
-        raise HTTPException(status_code=502, detail=str(e)) from e
-
-    related_terms: list[str] = []
-    related_raw: dict[str, list] = {"top": [], "rising": []}
-    if demo_mode:
-        related_raw = demo_related_queries(seed)
-        related_terms = extract_related_terms(related_raw)
-    else:
-        try:
-            related_raw = fetch_related_queries(seed, geo=req.geo)
-            related_terms = extract_related_terms(related_raw)
-            if related_terms:
-                reasoning = (
-                    f"{reasoning} Related queries (Trends) para «{seed}»: "
-                    f"{', '.join(related_terms)}."
-                )
-        except Exception as e:
-            reasoning = f"{reasoning} Related queries no disponibles: {e}"
+        timeline, classify_data, data_until, series_by_window = build_demo_multi_window(
+            keywords, geo=req.geo
+        )
+        demo_mode = True
+        reasoning = (
+            f"{reasoning} Modo demo: Google Trends no disponible "
+            f"({type(e).__name__}) — curva sintética basada en el patrón viral."
+        )
+        if not related_raw.get("top") and not related_raw.get("rising"):
+            related_raw = demo_related_queries(seed)
 
     try:
         result = classify_lifecycle(classify_data)

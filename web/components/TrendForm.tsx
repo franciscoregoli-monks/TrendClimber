@@ -9,7 +9,8 @@ import type { AnalyzeResponse, SuggestedTrend } from "@/lib/types";
 import { TrendResults } from "./TrendResults";
 import { TrendSuggestions } from "./TrendSuggestions";
 
-const MAX_KEYWORDS = 5;
+const MAX_KEYWORDS = 3;
+const MAX_EXTRA_KEYWORDS = 2;
 
 interface TrendFormProps {
   onResultChange?: (result: AnalyzeResponse | null) => void;
@@ -18,7 +19,7 @@ interface TrendFormProps {
 export function TrendForm({ onResultChange }: TrendFormProps) {
   const [title, setTitle] = useState(FEATURED_TREND.trend);
   const [description, setDescription] = useState(FEATURED_TREND.trendDescription ?? "");
-  const [geo, setGeo] = useState("ES");
+  const [geo, setGeo] = useState("AR");
   const [keywordInput, setKeywordInput] = useState("");
   const [extraKeywords, setExtraKeywords] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -28,7 +29,7 @@ export function TrendForm({ onResultChange }: TrendFormProps) {
   function addKeyword(raw: string) {
     const value = raw.trim();
     if (!value) return;
-    if (extraKeywords.length >= MAX_KEYWORDS) return;
+    if (extraKeywords.length >= MAX_EXTRA_KEYWORDS) return;
     if (extraKeywords.some((k) => k.toLowerCase() === value.toLowerCase())) return;
     setExtraKeywords((prev) => [...prev, value]);
     setKeywordInput("");
@@ -156,7 +157,8 @@ export function TrendForm({ onResultChange }: TrendFormProps) {
             Keywords adicionales <span className="font-normal text-[var(--hack-text-muted)]">(opcional)</span>
           </label>
           <p className="mb-3 text-xs leading-[18px] text-[var(--hack-text-muted)]">
-            Añade términos de búsqueda manualmente. Se combinan con los de IA (máx. {MAX_KEYWORDS} en total).
+            Añade términos de búsqueda. Se combinan con el título y related queries
+            de Google Trends (máx. {MAX_KEYWORDS} keywords en total).
           </p>
           <div className="flex gap-2">
             <input
@@ -166,12 +168,12 @@ export function TrendForm({ onResultChange }: TrendFormProps) {
               onKeyDown={handleKeywordKeyDown}
               placeholder="Ej: quiet luxury aesthetic"
               className="hack-input"
-              disabled={extraKeywords.length >= MAX_KEYWORDS}
+              disabled={extraKeywords.length >= MAX_EXTRA_KEYWORDS}
             />
             <button
               type="button"
               onClick={() => addKeyword(keywordInput)}
-              disabled={!keywordInput.trim() || extraKeywords.length >= MAX_KEYWORDS}
+              disabled={!keywordInput.trim() || extraKeywords.length >= MAX_EXTRA_KEYWORDS}
               className="hack-btn-secondary shrink-0 whitespace-nowrap"
             >
               Añadir
