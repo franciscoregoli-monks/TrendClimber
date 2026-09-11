@@ -61,6 +61,21 @@ class LifecycleClassifierTests(unittest.TestCase):
         self.assertGreater(result.metrics["momentum_30"], 0)
         self.assertLess(result.metrics["acceleration_now"], 0)
 
+    def test_two_day_old_peak_is_not_smeared_into_the_now_window(self):
+        """Centered smoothing used to leak the peak into "now" and read as rising."""
+        values = np.r_[np.zeros(YEAR_POINTS - 7), [1.0, 1.0, 1.0, 6.0, 100.0, 25.0, 2.0]]
+        result = classify(values)
+        self.assertEqual(result.stage, "En declive")
+        # Today is 2/100 of the peak; the level must reflect that, not ~0.64.
+        self.assertLess(result.metrics["current_to_peak"], 0.2)
+        self.assertGreater(result.metrics["peak_drawdown"], 0.7)
+
+    def test_rising_branch_is_gated_by_drawdown(self):
+        """A collapsed spike keeps a positive 30d slope but must not read as rising."""
+        result = classify(np.r_[np.zeros(YEAR_POINTS - 7), [1.0, 1.0, 1.0, 6.0, 100.0, 25.0, 2.0]])
+        self.assertGreater(result.metrics["momentum_30"], 0)
+        self.assertNotIn(result.stage, {"Emergente", "Crecimiento"})
+
     def test_stage_and_product_curve_type_stay_coherent(self):
         values = fad_curve()
         result = classify(values)

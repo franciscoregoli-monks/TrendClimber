@@ -58,6 +58,13 @@ NICHE_SHARE = 0.25
 RISING_MOMENTUM = 0.05
 RISING_ACCELERATION = 0.15
 
+# A spike that already collapsed keeps a positive 7/30-day slope, because the
+# rise sits inside the window. Distance from the recent peak is what separates
+# "still climbing" from "already fell", so it gates the rising branch.
+MAX_RISING_DRAWDOWN = 0.35
+DECLINE_DRAWDOWN = 0.5
+RECENT_PEAK_POINTS = 30
+
 
 @dataclass
 class LifecycleResult:
@@ -133,14 +140,21 @@ def classify_lifecycle(data: pd.DataFrame) -> LifecycleResult:
         raise ValueError("Se necesitan al menos 7 días de datos para clasificar.")
 
     smoothed = _smooth(values)
-    raw_peak = float(np.max(smoothed))
-    normalized = smoothed / raw_peak if raw_peak > 0 else np.zeros(n)
+    raw_peak = float(np.max(values))
+    # A lone one-day blip is not a trend, so "is there any signal at all" is
+    # judged on the smoothed curve, not on the raw maximum.
+    sustained_peak = float(np.max(smoothed))
+    # Shape features tolerate one-point noise, so they read the smoothed curve.
+    normalized = smoothed / sustained_peak if sustained_peak > 0 else np.zeros(n)
+    # Level features must not be smeared: a centered mean leaks a two-day-old
+    # peak into the "now" window and hides the collapse we are looking for.
+    current = values / raw_peak if raw_peak > 0 else np.zeros(n)
 
     levels = {
-        "now": _tail_mean(normalized, HORIZON_POINTS["now"]),
-        "week": _tail_mean(normalized, HORIZON_POINTS["week"]),
-        "month": _tail_mean(normalized, HORIZON_POINTS["month"]),
-        "year": float(np.mean(normalized)),
+        "now": _tail_mean(current, HORIZON_POINTS["now"]),
+        "week": _tail_mean(current, HORIZON_POINTS["week"]),
+        "month": _tail_mean(current, HORIZON_POINTS["month"]),
+        "year": float(np.mean(current)),
     }
     weighted_level = sum(HORIZON_WEIGHTS[key] * level for key, level in levels.items())
 
@@ -149,8 +163,11 @@ def classify_lifecycle(data: pd.DataFrame) -> LifecycleResult:
     accel_week = _relative_change(levels["week"], levels["month"])
     baseline_momentum = _relative_change(levels["month"], levels["year"])
 
-    velocity_week = _velocity(normalized, HORIZON_POINTS["week"])
-    velocity_month = _velocity(normalized, HORIZON_POINTS["month"])
+    velocity_week = _velocity(current, HORIZON_POINTS["week"])
+    velocity_month = _velocity(current, HORIZON_POINTS["month"])
+
+    recent_peak = float(np.max(current[-min(RECENT_PEAK_POINTS, n) :]))
+    drawdown = 1.0 - levels["now"] / recent_peak if recent_peak > 0 else 0.0
 
     peak_idx = int(np.argmax(normalized))
     peak_age = n - 1 - peak_idx
@@ -160,8 +177,9 @@ def classify_lifecycle(data: pd.DataFrame) -> LifecycleResult:
 
     level_now = levels["now"]
     peaked_before = peak_age >= 1
-    rising = velocity_month > RISING_MOMENTUM or accel_now > RISING_ACCELERATION
-    weak_signal = raw_peak < MIN_ABSOLUTE_SIGNAL
+    accelerating = velocity_month > RISING_MOMENTUM or accel_now > RISING_ACCELERATION
+    rising = accelerating and drawdown < MAX_RISING_DRAWDOWN
+    weak_signal = sustained_peak < MIN_ABSOLUTE_SIGNAL
 
     rising_score = _clamp01(max(velocity_month, accel_now) / 0.3)
     falling_score = _clamp01(-min(velocity_week, accel_now) / 0.3)
@@ -194,16 +212,17 @@ def classify_lifecycle(data: pd.DataFrame) -> LifecycleResult:
             + 0.25 * flat_score
         ),
         "En declive": (
-            0.50 * (1 - _clamp01(level_now / 0.5))
-            + 0.30 * falling_score
-            + 0.20 * _clamp01(peak_age / 14)
+            0.40 * (1 - _clamp01(level_now / 0.5))
+            + 0.25 * falling_score
+            + 0.20 * _clamp01(drawdown / 0.6)
+            + 0.15 * _clamp01(peak_age / 14)
         ),
     }
 
     # Deterministic ladder: short-term velocity first, long-term base as context.
     if weak_signal:
         stage = "Naciente"
-    elif peaked_before and level_now <= DECLINE_LEVEL:
+    elif peaked_before and (level_now <= DECLINE_LEVEL or drawdown >= DECLINE_DRAWDOWN):
         stage = "En declive"
     elif rising:
         stage = "Emergente" if active_share < NICHE_SHARE else "Crecimiento"
@@ -232,6 +251,7 @@ def classify_lifecycle(data: pd.DataFrame) -> LifecycleResult:
         "peak_position": round(peak_idx / max(n - 1, 1), 2),
         "volatility": round(float(np.std(normalized) * 100), 2),
         "current_to_peak": round(level_now, 3),
+        "peak_drawdown": round(drawdown, 3),
         "peak_age_points": peak_age,
         "acceleration_now": round(accel_now, 3),
         "acceleration_week": round(accel_week, 3),

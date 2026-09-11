@@ -14,12 +14,30 @@ interface VerdictHeaderProps {
   children?: ReactNode;
 }
 
+const NOW_DIRECTION_BAND = 0.15;
+
+/**
+ * A linear fit over the last 7 days still slopes up when a spike rose and
+ * collapsed inside that window, which contradicts the stage. The headline
+ * reports the present-time acceleration the stage is derived from, and only
+ * falls back to the fitted slope when that metric is absent.
+ */
+function headlineDirection(result: AnalyzeResponse) {
+  const accelNow = result.metrics.acceleration_now;
+  if (accelNow == null) {
+    return (
+      result.analytics.days7?.slope ??
+      result.analytics.days30?.slope ??
+      result.analytics.year?.slope
+    )?.direction;
+  }
+  if (accelNow > NOW_DIRECTION_BAND) return "bullish" as const;
+  if (accelNow < -NOW_DIRECTION_BAND) return "bearish" as const;
+  return "flat" as const;
+}
+
 export function VerdictHeader({ result, children }: VerdictHeaderProps) {
-  // The stage leads with the short horizon, so the headline slope must match it.
-  const primarySlope =
-    result.analytics.days7?.slope ??
-    result.analytics.days30?.slope ??
-    result.analytics.year?.slope;
+  const slopeDirection = headlineDirection(result);
   const forecastLabel = result.forecast
     ? FORECAST_METHOD_LABELS[result.forecast.method]
     : "—";
@@ -41,8 +59,8 @@ export function VerdictHeader({ result, children }: VerdictHeaderProps) {
 
         <div className="flex shrink-0 flex-wrap gap-2 sm:max-w-[280px] sm:justify-end">
           <StatPill label="Crecimiento" value={`${result.metrics.growth_ratio}x`} />
-          {primarySlope && (
-            <StatPill label="Pendiente" value={SLOPE_ENGLISH[primarySlope.direction]} />
+          {slopeDirection && (
+            <StatPill label="Pendiente" value={SLOPE_ENGLISH[slopeDirection]} />
           )}
           <StatPill label="Proyección" value={forecastLabel} />
         </div>
