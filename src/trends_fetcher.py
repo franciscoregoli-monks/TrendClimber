@@ -1,9 +1,11 @@
 """Fetch Google Trends interest-over-time data via pytrends."""
 
 import hashlib
+import os
 import time
 from datetime import datetime, timedelta
 from typing import Any
+from urllib.parse import urlparse
 
 import numpy as np
 import pandas as pd
@@ -15,6 +17,9 @@ CACHE_STALE_TTL_S = 6 * 3600
 MAX_INTEREST_RETRIES = 2
 RATE_LIMIT_RETRY_DELAYS = (8.0, 20.0)
 MAX_DAILY_RANGE_DAYS = 269
+PYTRENDS_TIMEOUT = (10, 25)
+PYTRENDS_RETRIES = 2
+PYTRENDS_BACKOFF_FACTOR = 0.1
 
 _interest_cache: dict[str, tuple[float, pd.DataFrame]] = {}
 _related_cache: dict[str, tuple[float, dict[str, list[dict[str, str | int]]]]] = {}
@@ -175,8 +180,33 @@ def fetch_multi_window_curves(
     return timeline, classify_data, end_str, series_by_window
 
 
+def _https_proxies_from_env() -> list[str]:
+    """Read optional comma-separated HTTPS proxies without accepting unsafe schemes."""
+    raw = os.getenv("PYTRENDS_HTTPS_PROXIES", "")
+    proxies: list[str] = []
+    for value in raw.split(","):
+        proxy = value.strip()
+        if not proxy:
+            continue
+        parsed = urlparse(proxy)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.port is None:
+            raise ValueError(
+                "PYTRENDS_HTTPS_PROXIES debe contener URLs HTTPS con puerto."
+            )
+        proxies.append(proxy)
+    return proxies
+
+
 def _create_pytrend(hl: str = "es-ES") -> TrendReq:
-    return TrendReq(hl=hl, tz=360, retries=2, backoff_factor=1.5)
+    """Create a bounded pytrends client, optionally rotating configured proxies."""
+    return TrendReq(
+        hl=hl,
+        tz=360,
+        timeout=PYTRENDS_TIMEOUT,
+        proxies=_https_proxies_from_env(),
+        retries=PYTRENDS_RETRIES,
+        backoff_factor=PYTRENDS_BACKOFF_FACTOR,
+    )
 
 
 def fetch_related_queries(
