@@ -419,10 +419,16 @@ def _align_forecast_with_lifecycle(
     if not forecast or not trend_context:
         return forecast
     metrics = trend_context.get("metrics") or {}
+    # A fresh fad still has a positive 30-day slope, so the short-term signals
+    # decide: recent velocity and the last-48h acceleration.
     clearly_declining = (
         trend_context.get("stage") == "En declive"
         and float(metrics.get("current_to_peak", 1.0)) <= 0.35
-        and float(metrics.get("momentum_30", 0.0)) <= 0
+        and min(
+            float(metrics.get("momentum_7", 0.0)),
+            float(metrics.get("acceleration_now", 0.0)),
+        )
+        <= 0
     )
     if not clearly_declining or forecast.get("hasSeasonality"):
         return forecast

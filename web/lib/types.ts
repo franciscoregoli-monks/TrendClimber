@@ -147,6 +147,9 @@ export interface AnalyzeResponse {
     volatility: number;
     current_to_peak?: number;
     peak_age_points?: number;
+    acceleration_now?: number;
+    acceleration_week?: number;
+    baseline_momentum?: number;
     momentum_7?: number;
     momentum_30?: number;
     persistence?: number;

@@ -15,7 +15,11 @@ interface VerdictHeaderProps {
 }
 
 export function VerdictHeader({ result, children }: VerdictHeaderProps) {
-  const slope30 = result.analytics.days30?.slope;
+  // The stage leads with the short horizon, so the headline slope must match it.
+  const primarySlope =
+    result.analytics.days7?.slope ??
+    result.analytics.days30?.slope ??
+    result.analytics.year?.slope;
   const forecastLabel = result.forecast
     ? FORECAST_METHOD_LABELS[result.forecast.method]
     : "—";
@@ -37,8 +41,8 @@ export function VerdictHeader({ result, children }: VerdictHeaderProps) {
 
         <div className="flex shrink-0 flex-wrap gap-2 sm:max-w-[280px] sm:justify-end">
           <StatPill label="Crecimiento" value={`${result.metrics.growth_ratio}x`} />
-          {slope30 && (
-            <StatPill label="Pendiente" value={SLOPE_ENGLISH[slope30.direction]} />
+          {primarySlope && (
+            <StatPill label="Pendiente" value={SLOPE_ENGLISH[primarySlope.direction]} />
           )}
           <StatPill label="Proyección" value={forecastLabel} />
         </div>

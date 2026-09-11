@@ -9,28 +9,28 @@ from src.keyword_generator import LIFECYCLE_STAGES
 
 STAGE_DESCRIPTIONS = {
     "Naciente": (
-        "La señal acaba de aparecer y todavía no formó un pico histórico relevante. "
+        "La señal acaba de aparecer y todavía no formó un pico relevante. "
         "Conviene observar si gana persistencia."
     ),
     "Emergente": (
-        "El interés acelera recientemente desde una presencia histórica limitada. "
+        "El interés acelera ahora desde una presencia todavía acotada. "
         "Es una ventana temprana para explorar y posicionarse."
     ),
     "Crecimiento": (
-        "La curva mantiene una subida sostenida y se acerca a su máximo observado. "
-        "La adopción continúa expandiéndose."
+        "La curva sostiene una subida amplia y se acerca a su máximo. "
+        "La adopción sigue expandiéndose."
     ),
     "Masiva": (
-        "El interés actual permanece cerca del máximo y concentra una exposición amplia. "
-        "La diferenciación resulta más difícil."
+        "El interés actual permanece cerca del pico y concentra exposición amplia. "
+        "La diferenciación es más difícil."
     ),
     "Saturada": (
-        "El interés continúa alto y persistente, pero la curva se estabilizó. "
+        "El interés sigue alto y persistente, pero la curva se estabilizó. "
         "El riesgo de repetición aumenta."
     ),
     "En declive": (
-        "El pico quedó atrás y el interés reciente cayó de forma significativa. "
-        "Conviene evitar activaciones genéricas o buscar una nueva derivación."
+        "El pico quedó atrás y el interés de las últimas 48 horas cayó con claridad. "
+        "Conviene evitar activaciones genéricas o buscar una derivación."
     ),
 }
 
@@ -42,6 +42,21 @@ STAGE_COLORS = {
     "Saturada": "#ef4444",
     "En declive": "#94a3b8",
 }
+
+# The product answers "what is happening right now", so the newest points carry
+# most of the weight and the yearly curve only contributes a baseline.
+HORIZON_POINTS = {"now": 2, "week": 7, "month": 30}
+HORIZON_WEIGHTS = {"now": 0.45, "week": 0.30, "month": 0.18, "year": 0.07}
+RECENCY_HALF_LIFE = 4.0
+
+# Decision thresholds, expressed against the observed peak (0-1) unless noted.
+MIN_ABSOLUTE_SIGNAL = 5.0
+DECLINE_LEVEL = 0.35
+MATURE_LEVEL = 0.65
+PLATEAU_SHARE = 0.65
+NICHE_SHARE = 0.25
+RISING_MOMENTUM = 0.05
+RISING_ACCELERATION = 0.15
 
 
 @dataclass
@@ -72,12 +87,43 @@ def _clamp01(value: float) -> float:
     return max(0.0, min(float(value), 1.0))
 
 
+def _smooth(values: np.ndarray) -> np.ndarray:
+    """Centered mean that removes one-point noise without erasing a short fad."""
+    window = 3 if len(values) >= 14 else 1
+    return pd.Series(values).rolling(window, center=True, min_periods=1).mean().values
+
+
+def _tail_mean(normalized: np.ndarray, points: int) -> float:
+    return float(np.mean(normalized[-min(points, len(normalized)) :]))
+
+
+def _velocity(normalized: np.ndarray, points: int) -> float:
+    """Fraction of the peak gained or lost across the window."""
+    window = normalized[-min(points, len(normalized)) :]
+    if len(window) < 2:
+        return 0.0
+    return float(_linear_slope(window) * (len(window) - 1))
+
+
+def _relative_change(current: float, baseline: float) -> float:
+    """Acceleration of the current level against a slower baseline."""
+    return (current - baseline) / max(baseline, 0.02)
+
+
+def _recency_weighted_level(normalized: np.ndarray) -> float:
+    ages = np.arange(len(normalized))[::-1]
+    weights = np.exp(-np.log(2) * ages / RECENCY_HALF_LIFE)
+    return float(np.sum(normalized * weights) / np.sum(weights))
+
+
 def classify_lifecycle(data: pd.DataFrame) -> LifecycleResult:
     """
-    Classify one global lifecycle stage from the complete observed curve.
+    Classify one global lifecycle stage weighted towards the present.
 
-    Google Trends values are relative, so the decision uses curve geometry:
-    current level vs. peak, peak age, persistence and 7/30-point momentum.
+    Google Trends values are relative, so every feature is measured against the
+    observed peak. Levels are aggregated with exponential recency decay, and the
+    stage itself comes from a deterministic ladder so that the label, the curve
+    and the projection can never contradict each other.
     """
     series = _aggregate_series(data).dropna()
     values = np.clip(series.values.astype(float), 0, None)
@@ -86,130 +132,112 @@ def classify_lifecycle(data: pd.DataFrame) -> LifecycleResult:
     if n < 7:
         raise ValueError("Se necesitan al menos 7 días de datos para clasificar.")
 
-    # A centered 3-point mean limits one-point noise without erasing a short fad.
-    smooth_window = 3 if n >= 14 else 1
-    smoothed = (
-        pd.Series(values)
-        .rolling(smooth_window, center=True, min_periods=1)
-        .mean()
-        .values
-    )
+    smoothed = _smooth(values)
     raw_peak = float(np.max(smoothed))
+    normalized = smoothed / raw_peak if raw_peak > 0 else np.zeros(n)
 
-    if raw_peak <= 0:
-        normalized = np.zeros(n)
-    else:
-        normalized = smoothed / raw_peak
+    levels = {
+        "now": _tail_mean(normalized, HORIZON_POINTS["now"]),
+        "week": _tail_mean(normalized, HORIZON_POINTS["week"]),
+        "month": _tail_mean(normalized, HORIZON_POINTS["month"]),
+        "year": float(np.mean(normalized)),
+    }
+    weighted_level = sum(HORIZON_WEIGHTS[key] * level for key, level in levels.items())
+
+    # Instantaneous acceleration vs. the slower baselines.
+    accel_now = _relative_change(levels["now"], levels["week"])
+    accel_week = _relative_change(levels["week"], levels["month"])
+    baseline_momentum = _relative_change(levels["month"], levels["year"])
+
+    velocity_week = _velocity(normalized, HORIZON_POINTS["week"])
+    velocity_month = _velocity(normalized, HORIZON_POINTS["month"])
 
     peak_idx = int(np.argmax(normalized))
     peak_age = n - 1 - peak_idx
-    peak_position = peak_idx / (n - 1)
-    recent_7 = normalized[-min(7, n) :]
-    recent_30 = normalized[-min(30, n) :]
-    previous_30 = normalized[-min(60, n) : -min(30, n)]
-    if len(previous_30) == 0:
-        split = max(1, n // 2)
-        previous_30 = normalized[:split]
-
-    current_to_peak = float(np.mean(recent_7))
-    avg_recent = float(np.mean(recent_30) * 100)
-    avg_early = float(np.mean(previous_30) * 100)
-    avg_all = float(np.mean(normalized) * 100)
-    growth_ratio = (avg_recent + 1) / (avg_early + 1)
-    momentum_7 = _linear_slope(recent_7) * max(len(recent_7) - 1, 1)
-    momentum_30 = _linear_slope(recent_30) * max(len(recent_30) - 1, 1)
-    slope_recent = _linear_slope(recent_30) * 100
     persistence = float(np.mean(normalized >= 0.5))
     active_share = float(np.mean(normalized >= 0.1))
-    recent_high_share = float(np.mean(recent_30 >= 0.7))
-    peak_age_score = _clamp01(peak_age / max(min(60, n // 2), 1))
-    peak_recency = 1 - peak_age_score
-    positive_7 = _clamp01(momentum_7 / 0.35)
-    positive_30 = _clamp01(momentum_30 / 0.6)
-    negative_7 = _clamp01(-momentum_7 / 0.35)
-    negative_30 = _clamp01(-momentum_30 / 0.6)
-    flattening = 1 - _clamp01(abs(momentum_30) / 0.2)
-    low_raw_signal = raw_peak < 5
-    meaningful_past_peak = raw_peak >= 5 and peak_age >= 3
+    high_share = float(np.mean(normalized[-min(30, n) :] >= 0.7))
+
+    level_now = levels["now"]
+    peaked_before = peak_age >= 1
+    rising = velocity_month > RISING_MOMENTUM or accel_now > RISING_ACCELERATION
+    weak_signal = raw_peak < MIN_ABSOLUTE_SIGNAL
+
+    rising_score = _clamp01(max(velocity_month, accel_now) / 0.3)
+    falling_score = _clamp01(-min(velocity_week, accel_now) / 0.3)
+    flat_score = 1 - _clamp01(abs(velocity_month) / 0.15)
 
     scores: dict[str, float] = {
         "Naciente": (
-            0.45 * (1 - _clamp01(active_share / 0.12))
-            + 0.30 * peak_recency
-            + 0.25 * (1 - _clamp01(current_to_peak / 0.5))
+            0.45 * (1 - _clamp01(active_share / 0.3))
+            + 0.30 * (1 - _clamp01(raw_peak / 20))
+            + 0.25 * (1 - _clamp01(level_now / 0.4))
         ),
         "Emergente": (
-            0.35 * peak_recency
-            + 0.35 * max(positive_7, positive_30)
-            + 0.30 * (1 - _clamp01(persistence / 0.25))
+            0.45 * rising_score
+            + 0.30 * (1 - _clamp01(active_share / 0.3))
+            + 0.25 * _clamp01(level_now / 0.8)
         ),
         "Crecimiento": (
-            0.40 * current_to_peak
-            + 0.40 * positive_30
-            + 0.20 * _clamp01(active_share / 0.35)
+            0.40 * rising_score
+            + 0.35 * _clamp01(level_now / 0.8)
+            + 0.25 * _clamp01(active_share / 0.5)
         ),
         "Masiva": (
-            0.50 * current_to_peak
-            + 0.30 * recent_high_share
-            + 0.20 * flattening
+            0.45 * _clamp01(level_now / 0.85)
+            + 0.30 * high_share
+            + 0.25 * flat_score
         ),
         "Saturada": (
-            0.35 * current_to_peak
-            + 0.35 * _clamp01(persistence / 0.4)
-            + 0.30 * flattening
+            0.35 * _clamp01(level_now / 0.7)
+            + 0.40 * _clamp01(persistence / 0.7)
+            + 0.25 * flat_score
         ),
         "En declive": (
-            0.45 * (1 - current_to_peak)
-            + 0.25 * peak_age_score
-            + 0.20 * negative_30
-            + 0.10 * negative_7
+            0.50 * (1 - _clamp01(level_now / 0.5))
+            + 0.30 * falling_score
+            + 0.20 * _clamp01(peak_age / 14)
         ),
     }
 
-    # Eligibility guards encode the ordered lifecycle semantics.
-    if peak_age > 14 or max(momentum_7, momentum_30) <= 0:
-        scores["Emergente"] = 0.0
-    if momentum_30 <= 0.03 or active_share < 0.08:
-        scores["Crecimiento"] = 0.0
-    if (
-        current_to_peak < 0.65
-        or recent_high_share < 0.35
-        or momentum_30 > 0.08
-    ):
-        scores["Masiva"] = 0.0
-    if current_to_peak < 0.45 or persistence < 0.18 or momentum_30 > 0.05:
-        scores["Saturada"] = 0.0
-    if not meaningful_past_peak or current_to_peak > 0.7:
-        scores["En declive"] = 0.0
-
-    # Hard invariants prevent logically impossible labels.
-    if meaningful_past_peak and current_to_peak <= 0.35:
-        stage = "En declive"
-        scores[stage] = max(scores[stage], 0.9)
-    elif low_raw_signal or (active_share < 0.04 and peak_age <= 7):
+    # Deterministic ladder: short-term velocity first, long-term base as context.
+    if weak_signal:
         stage = "Naciente"
-        scores[stage] = max(scores[stage], 0.82)
+    elif peaked_before and level_now <= DECLINE_LEVEL:
+        stage = "En declive"
+    elif rising:
+        stage = "Emergente" if active_share < NICHE_SHARE else "Crecimiento"
+    elif level_now >= MATURE_LEVEL:
+        stage = "Saturada" if persistence >= PLATEAU_SHARE else "Masiva"
+    elif peaked_before:
+        stage = "En declive"
     else:
-        stage = max(scores, key=scores.get)
+        stage = "Naciente"
 
-    top_score = scores[stage]
-    sorted_scores = sorted(scores.values(), reverse=True)
-    margin = sorted_scores[0] - sorted_scores[1] if len(sorted_scores) > 1 else 0.5
-    confidence = min(0.95, 0.45 + top_score * 0.3 + margin * 0.4)
+    scores[stage] = max(scores[stage], 0.7)
+    runner_up = max(value for key, value in scores.items() if key != stage)
+    margin = max(scores[stage] - runner_up, 0.0)
+    confidence = min(0.95, 0.55 + 0.25 * scores[stage] + 0.3 * margin)
+
+    avg_recent = levels["week"] * 100
+    avg_early = levels["year"] * 100
 
     metrics = {
-        "avg_interest": round(avg_all, 1),
+        "avg_interest": round(weighted_level * 100, 1),
         "avg_recent": round(avg_recent, 1),
         "avg_early": round(avg_early, 1),
         "max_interest": 100.0 if raw_peak > 0 else 0.0,
-        "growth_ratio": round(growth_ratio, 2),
-        "slope_recent": round(slope_recent, 3),
-        "peak_position": round(peak_position, 2),
+        "growth_ratio": round((avg_recent + 1) / (avg_early + 1), 2),
+        "slope_recent": round(velocity_week * 100, 3),
+        "peak_position": round(peak_idx / max(n - 1, 1), 2),
         "volatility": round(float(np.std(normalized) * 100), 2),
-        "current_to_peak": round(current_to_peak, 3),
+        "current_to_peak": round(level_now, 3),
         "peak_age_points": peak_age,
-        "momentum_7": round(momentum_7, 3),
-        "momentum_30": round(momentum_30, 3),
+        "acceleration_now": round(accel_now, 3),
+        "acceleration_week": round(accel_week, 3),
+        "baseline_momentum": round(baseline_momentum, 3),
+        "momentum_7": round(velocity_week, 3),
+        "momentum_30": round(velocity_month, 3),
         "persistence": round(persistence, 3),
         "days_analyzed": n,
     }
