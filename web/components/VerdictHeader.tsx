@@ -28,6 +28,7 @@ export function VerdictHeader({ result, children }: VerdictHeaderProps) {
             stage={result.stage}
             color={result.color}
             confidence={result.confidence}
+            analyzedPoints={result.metrics.days_analyzed}
           />
           <p className="mt-3 text-[15px] leading-[22px] text-[var(--hack-text-secondary)]">
             {result.description}

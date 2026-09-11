@@ -154,7 +154,13 @@ def analyze(req: AnalyzeRequest):
             related_raw = demo_related_queries(seed)
 
     try:
-        result = classify_lifecycle(classify_data)
+        lifecycle_series = series_by_window.get("year")
+        lifecycle_data = (
+            lifecycle_series.to_frame(name="total")
+            if lifecycle_series is not None and len(lifecycle_series) >= 7
+            else classify_data
+        )
+        result = classify_lifecycle(lifecycle_data)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al clasificar: {e}") from e
 

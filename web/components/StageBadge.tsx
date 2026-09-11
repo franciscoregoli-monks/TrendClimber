@@ -5,14 +5,15 @@ interface StageBadgeProps {
   stage: LifecycleStage;
   color: string;
   confidence: number;
+  analyzedPoints?: number;
 }
 
-export function StageBadge({ stage, color, confidence }: StageBadgeProps) {
+export function StageBadge({ stage, color, confidence, analyzedPoints }: StageBadgeProps) {
   return (
     <div className="flex flex-wrap items-center gap-3">
       <div>
         <p className="text-xs font-medium uppercase tracking-wide text-[var(--hack-text-muted)]">
-          Estadio del lifecycle
+          Estadio global del lifecycle
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <span className="hack-stage-badge" style={{ backgroundColor: color }}>
@@ -25,6 +26,7 @@ export function StageBadge({ stage, color, confidence }: StageBadgeProps) {
         <strong className="font-medium text-[var(--hack-text)]">
           {Math.round(confidence * 100)}%
         </strong>
+        {analyzedPoints ? ` · curva completa (${analyzedPoints} puntos)` : ""}
       </span>
     </div>
   );

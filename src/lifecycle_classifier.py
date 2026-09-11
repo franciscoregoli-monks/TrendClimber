@@ -9,28 +9,28 @@ from src.keyword_generator import LIFECYCLE_STAGES
 
 STAGE_DESCRIPTIONS = {
     "Naciente": (
-        "La conversación apenas comienza. Volumen de búsqueda muy bajo; "
-        "detectarla ahora ofrece ventaja de first-mover."
+        "La señal acaba de aparecer y todavía no formó un pico histórico relevante. "
+        "Conviene observar si gana persistencia."
     ),
     "Emergente": (
-        "La tendencia despierta interés creciente desde una base baja. "
-        "Momento ideal para explorar y posicionarse con autenticidad."
+        "El interés acelera recientemente desde una presencia histórica limitada. "
+        "Es una ventana temprana para explorar y posicionarse."
     ),
     "Crecimiento": (
-        "Adopción acelerada y visibilidad en aumento. "
-        "Buen momento para activar campañas antes de la saturación."
+        "La curva mantiene una subida sostenida y se acerca a su máximo observado. "
+        "La adopción continúa expandiéndose."
     ),
     "Masiva": (
-        "Alcanzó pico de relevancia y alta visibilidad mainstream. "
-        "Participar aún tiene impacto, pero la diferenciación es más difícil."
+        "El interés actual permanece cerca del máximo y concentra una exposición amplia. "
+        "La diferenciación resulta más difícil."
     ),
     "Saturada": (
-        "Alta exposición pero estancamiento o repetición. "
-        "El riesgo de parecer forzado aumenta; conviene un ángulo único."
+        "El interés continúa alto y persistente, pero la curva se estabilizó. "
+        "El riesgo de repetición aumenta."
     ),
     "En declive": (
-        "Pierde tracción y el interés cae. "
-        "Evitar activaciones genéricas; buscar sub-tendencias o pivotar."
+        "El pico quedó atrás y el interés reciente cayó de forma significativa. "
+        "Conviene evitar activaciones genéricas o buscar una nueva derivación."
     ),
 }
 
@@ -68,89 +68,130 @@ def _linear_slope(values: np.ndarray) -> float:
     return float(coeffs[0])
 
 
+def _clamp01(value: float) -> float:
+    return max(0.0, min(float(value), 1.0))
+
+
 def classify_lifecycle(data: pd.DataFrame) -> LifecycleResult:
     """
-    Classify trend lifecycle from interest-over-time DataFrame.
+    Classify one global lifecycle stage from the complete observed curve.
 
-    Uses combined keyword signal and analyzes:
-    - absolute level, recent vs early growth, peak position, momentum
+    Google Trends values are relative, so the decision uses curve geometry:
+    current level vs. peak, peak age, persistence and 7/30-point momentum.
     """
     series = _aggregate_series(data).dropna()
-    values = series.values.astype(float)
+    values = np.clip(series.values.astype(float), 0, None)
     n = len(values)
 
     if n < 7:
         raise ValueError("Se necesitan al menos 7 días de datos para clasificar.")
 
-    recent_window = max(7, n // 4)
-    early_window = max(7, n // 4)
+    # A centered 3-point mean limits one-point noise without erasing a short fad.
+    smooth_window = 3 if n >= 14 else 1
+    smoothed = (
+        pd.Series(values)
+        .rolling(smooth_window, center=True, min_periods=1)
+        .mean()
+        .values
+    )
+    raw_peak = float(np.max(smoothed))
 
-    recent = values[-recent_window:]
-    early = values[:early_window]
-    mid = values[n // 3 : 2 * n // 3] if n >= 15 else values
+    if raw_peak <= 0:
+        normalized = np.zeros(n)
+    else:
+        normalized = smoothed / raw_peak
 
-    avg_all = float(np.mean(values))
-    avg_recent = float(np.mean(recent))
-    avg_early = float(np.mean(early))
-    max_val = float(np.max(values))
-    min_val = float(np.min(values))
-    peak_idx = int(np.argmax(values))
-    peak_position = peak_idx / (n - 1)  # 0=start, 1=end
+    peak_idx = int(np.argmax(normalized))
+    peak_age = n - 1 - peak_idx
+    peak_position = peak_idx / (n - 1)
+    recent_7 = normalized[-min(7, n) :]
+    recent_30 = normalized[-min(30, n) :]
+    previous_30 = normalized[-min(60, n) : -min(30, n)]
+    if len(previous_30) == 0:
+        split = max(1, n // 2)
+        previous_30 = normalized[:split]
 
-    slope_all = _linear_slope(values)
-    slope_recent = _linear_slope(recent)
-    slope_early = _linear_slope(early)
-
+    current_to_peak = float(np.mean(recent_7))
+    avg_recent = float(np.mean(recent_30) * 100)
+    avg_early = float(np.mean(previous_30) * 100)
+    avg_all = float(np.mean(normalized) * 100)
     growth_ratio = (avg_recent + 1) / (avg_early + 1)
-    momentum = avg_recent - avg_early
-    volatility = float(np.std(values)) if n > 1 else 0.0
+    momentum_7 = _linear_slope(recent_7) * max(len(recent_7) - 1, 1)
+    momentum_30 = _linear_slope(recent_30) * max(len(recent_30) - 1, 1)
+    slope_recent = _linear_slope(recent_30) * 100
+    persistence = float(np.mean(normalized >= 0.5))
+    active_share = float(np.mean(normalized >= 0.1))
+    recent_high_share = float(np.mean(recent_30 >= 0.7))
+    peak_age_score = _clamp01(peak_age / max(min(60, n // 2), 1))
+    peak_recency = 1 - peak_age_score
+    positive_7 = _clamp01(momentum_7 / 0.35)
+    positive_30 = _clamp01(momentum_30 / 0.6)
+    negative_7 = _clamp01(-momentum_7 / 0.35)
+    negative_30 = _clamp01(-momentum_30 / 0.6)
+    flattening = 1 - _clamp01(abs(momentum_30) / 0.2)
+    low_raw_signal = raw_peak < 5
+    meaningful_past_peak = raw_peak >= 5 and peak_age >= 3
 
-    # Normalized feature scores per stage (0-1)
-    scores: dict[str, float] = {}
+    scores: dict[str, float] = {
+        "Naciente": (
+            0.45 * (1 - _clamp01(active_share / 0.12))
+            + 0.30 * peak_recency
+            + 0.25 * (1 - _clamp01(current_to_peak / 0.5))
+        ),
+        "Emergente": (
+            0.35 * peak_recency
+            + 0.35 * max(positive_7, positive_30)
+            + 0.30 * (1 - _clamp01(persistence / 0.25))
+        ),
+        "Crecimiento": (
+            0.40 * current_to_peak
+            + 0.40 * positive_30
+            + 0.20 * _clamp01(active_share / 0.35)
+        ),
+        "Masiva": (
+            0.50 * current_to_peak
+            + 0.30 * recent_high_share
+            + 0.20 * flattening
+        ),
+        "Saturada": (
+            0.35 * current_to_peak
+            + 0.35 * _clamp01(persistence / 0.4)
+            + 0.30 * flattening
+        ),
+        "En declive": (
+            0.45 * (1 - current_to_peak)
+            + 0.25 * peak_age_score
+            + 0.20 * negative_30
+            + 0.10 * negative_7
+        ),
+    }
 
-    # Naciente: very low volume, minimal growth
-    scores["Naciente"] = (
-        0.5 * (1 - min(avg_all / 20, 1))
-        + 0.3 * (1 - min(growth_ratio / 1.5, 1))
-        + 0.2 * (1 - min(max_val / 25, 1))
-    )
+    # Eligibility guards encode the ordered lifecycle semantics.
+    if peak_age > 14 or max(momentum_7, momentum_30) <= 0:
+        scores["Emergente"] = 0.0
+    if momentum_30 <= 0.03 or active_share < 0.08:
+        scores["Crecimiento"] = 0.0
+    if (
+        current_to_peak < 0.65
+        or recent_high_share < 0.35
+        or momentum_30 > 0.08
+    ):
+        scores["Masiva"] = 0.0
+    if current_to_peak < 0.45 or persistence < 0.18 or momentum_30 > 0.05:
+        scores["Saturada"] = 0.0
+    if not meaningful_past_peak or current_to_peak > 0.7:
+        scores["En declive"] = 0.0
 
-    # Emergente: low base + strong recent growth
-    emergente_growth = min(max(growth_ratio - 1, 0) / 2, 1)
-    scores["Emergente"] = (
-        0.4 * (1 - min(avg_recent / 35, 1))
-        + 0.4 * emergente_growth
-        + 0.2 * min(max(slope_recent, 0) / 2, 1)
-    )
+    # Hard invariants prevent logically impossible labels.
+    if meaningful_past_peak and current_to_peak <= 0.35:
+        stage = "En declive"
+        scores[stage] = max(scores[stage], 0.9)
+    elif low_raw_signal or (active_share < 0.04 and peak_age <= 7):
+        stage = "Naciente"
+        scores[stage] = max(scores[stage], 0.82)
+    else:
+        stage = max(scores, key=scores.get)
 
-    # Crecimiento: moderate-high volume, positive momentum, peak not yet at end
-    scores["Crecimiento"] = (
-        0.3 * min(avg_recent / 50, 1)
-        + 0.4 * min(max(slope_recent, 0) / 3, 1)
-        + 0.3 * (1 - peak_position if peak_position > 0.3 else 0.5)
-    )
-
-    # Masiva: high volume near peak
-    scores["Masiva"] = (
-        0.5 * min(avg_recent / 70, 1)
-        + 0.3 * min(max_val / 80, 1)
-        + 0.2 * (1 - abs(peak_position - 0.7))
-    )
-
-    # Saturada: was high, now flat or slightly declining at high level
-    was_high = min(max(np.mean(mid), avg_early) / 60, 1)
-    flattening = 1 - min(abs(slope_recent) / 2, 1) if avg_recent > 40 else 0
-    slight_decline = min(max(-slope_recent, 0) / 3, 1) if avg_recent > 35 else 0
-    scores["Saturada"] = 0.4 * was_high + 0.35 * flattening + 0.25 * slight_decline
-
-    # En declive: clear negative trend, peak in the past
-    past_peak = 1.0 if peak_position < 0.6 else max(0, 1 - peak_position)
-    declining = min(max(-slope_recent, 0) / 4, 1)
-    drop_from_peak = min((max_val - avg_recent) / max(max_val, 1), 1)
-    scores["En declive"] = 0.35 * past_peak + 0.35 * declining + 0.3 * drop_from_peak
-
-    # Pick best stage
-    stage = max(scores, key=scores.get)
     top_score = scores[stage]
     sorted_scores = sorted(scores.values(), reverse=True)
     margin = sorted_scores[0] - sorted_scores[1] if len(sorted_scores) > 1 else 0.5
@@ -160,11 +201,16 @@ def classify_lifecycle(data: pd.DataFrame) -> LifecycleResult:
         "avg_interest": round(avg_all, 1),
         "avg_recent": round(avg_recent, 1),
         "avg_early": round(avg_early, 1),
-        "max_interest": round(max_val, 1),
+        "max_interest": 100.0 if raw_peak > 0 else 0.0,
         "growth_ratio": round(growth_ratio, 2),
         "slope_recent": round(slope_recent, 3),
         "peak_position": round(peak_position, 2),
-        "volatility": round(volatility, 2),
+        "volatility": round(float(np.std(normalized) * 100), 2),
+        "current_to_peak": round(current_to_peak, 3),
+        "peak_age_points": peak_age,
+        "momentum_7": round(momentum_7, 3),
+        "momentum_30": round(momentum_30, 3),
+        "persistence": round(persistence, 3),
         "days_analyzed": n,
     }
 

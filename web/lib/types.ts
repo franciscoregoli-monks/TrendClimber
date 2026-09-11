@@ -145,6 +145,11 @@ export interface AnalyzeResponse {
     slope_recent: number;
     peak_position: number;
     volatility: number;
+    current_to_peak?: number;
+    peak_age_points?: number;
+    momentum_7?: number;
+    momentum_30?: number;
+    persistence?: number;
     days_analyzed: number;
   };
   stageScores: Record<string, number>;

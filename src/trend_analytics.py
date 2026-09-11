@@ -395,7 +395,7 @@ def _build_forecast(
     prophet = _try_prophet(series, periods)
     if prophet:
         label = prophet.get("label") or f"Prophet · proyección a {periods} días"
-        return {
+        forecast = {
             "method": "prophet",
             "hasSeasonality": prophet["hasSeasonality"],
             "forecastDays": periods,
@@ -404,8 +404,50 @@ def _build_forecast(
             "seasonality": prophet["seasonality"],
             "label": label,
         }
+        return _align_forecast_with_lifecycle(forecast, series, trend_context)
 
-    return build_forecast(series, periods, trend_context)
+    forecast = build_forecast(series, periods, trend_context)
+    return _align_forecast_with_lifecycle(forecast, series, trend_context)
+
+
+def _align_forecast_with_lifecycle(
+    forecast: dict | None,
+    series: pd.Series,
+    trend_context: dict[str, Any] | None,
+) -> dict | None:
+    """Avoid an unsupported rebound when the global curve is clearly declining."""
+    if not forecast or not trend_context:
+        return forecast
+    metrics = trend_context.get("metrics") or {}
+    clearly_declining = (
+        trend_context.get("stage") == "En declive"
+        and float(metrics.get("current_to_peak", 1.0)) <= 0.35
+        and float(metrics.get("momentum_30", 0.0)) <= 0
+    )
+    if not clearly_declining or forecast.get("hasSeasonality"):
+        return forecast
+
+    ceiling = max(float(series.dropna().iloc[-1]), 0.0)
+    adjusted = {**forecast, "timeline": []}
+    for point in forecast.get("timeline", []):
+        row = dict(point)
+        prediction = min(max(float(row.get("forecast") or 0), 0.0), ceiling)
+        row["forecast"] = round(prediction, 2)
+        row["lower"] = round(
+            min(max(float(row.get("lower") or 0), 0.0), prediction),
+            2,
+        )
+        row["upper"] = round(
+            min(max(float(row.get("upper") or prediction), prediction), ceiling),
+            2,
+        )
+        adjusted["timeline"].append(row)
+        ceiling = prediction
+
+    adjusted["label"] = (
+        f"{forecast.get('label', 'Proyección')} · coherente con el declive observado"
+    )
+    return adjusted
 
 
 def _select_training_series(series_by_window: dict[str, pd.Series]) -> pd.Series | None:
