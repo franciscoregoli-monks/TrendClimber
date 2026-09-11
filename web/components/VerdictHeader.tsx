@@ -7,16 +7,15 @@ import {
   FORECAST_METHOD_LABELS,
   SLOPE_ENGLISH,
 } from "@/lib/labels";
-import type { AnalyzeResponse, CurveKey } from "@/lib/types";
+import type { AnalyzeResponse } from "@/lib/types";
 
 interface VerdictHeaderProps {
   result: AnalyzeResponse;
-  activeWindow: CurveKey;
   children?: ReactNode;
 }
 
-export function VerdictHeader({ result, activeWindow, children }: VerdictHeaderProps) {
-  const activeSlope = result.analytics[activeWindow]?.slope;
+export function VerdictHeader({ result, children }: VerdictHeaderProps) {
+  const slope30 = result.analytics.days30?.slope;
   const forecastLabel = result.forecast
     ? FORECAST_METHOD_LABELS[result.forecast.method]
     : "—";
@@ -37,8 +36,8 @@ export function VerdictHeader({ result, activeWindow, children }: VerdictHeaderP
 
         <div className="flex shrink-0 flex-wrap gap-2 sm:max-w-[280px] sm:justify-end">
           <StatPill label="Crecimiento" value={`${result.metrics.growth_ratio}x`} />
-          {activeSlope && (
-            <StatPill label="Pendiente" value={SLOPE_ENGLISH[activeSlope.direction]} />
+          {slope30 && (
+            <StatPill label="Pendiente" value={SLOPE_ENGLISH[slope30.direction]} />
           )}
           <StatPill label="Proyección" value={forecastLabel} />
         </div>

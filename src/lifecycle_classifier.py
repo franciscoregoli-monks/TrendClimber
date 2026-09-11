@@ -175,16 +175,3 @@ def classify_lifecycle(data: pd.DataFrame) -> LifecycleResult:
         metrics=metrics,
         stage_scores={k: round(v, 3) for k, v in scores.items()},
     )
-
-
-def classify_lifecycle_windows(
-    series_by_window: dict[str, pd.Series],
-) -> dict[str, LifecycleResult]:
-    """Classify each visible time window from its own curve and metrics."""
-    results: dict[str, LifecycleResult] = {}
-    for key, series in series_by_window.items():
-        clean = series.dropna()
-        if len(clean) < 7:
-            continue
-        results[key] = classify_lifecycle(clean.to_frame(name="total"))
-    return results
