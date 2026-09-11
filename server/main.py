@@ -7,7 +7,12 @@ from pydantic import BaseModel, Field
 
 from src.brand_strategy import generate_brand_strategy, summarize_analyze_response
 from src.keyword_generator import LIFECYCLE_STAGES, generate_keywords
-from src.lifecycle_classifier import STAGE_COLORS, STAGE_DESCRIPTIONS, classify_lifecycle
+from src.lifecycle_classifier import (
+    STAGE_COLORS,
+    STAGE_DESCRIPTIONS,
+    classify_lifecycle,
+    classify_lifecycle_windows,
+)
 from src.lifecycle_curve_models import classify_product_curve_from_series
 from src.trend_analytics import analyze_all_windows
 from src.trends_bigquery import fetch_suggested_trends
@@ -154,12 +159,13 @@ def analyze(req: AnalyzeRequest):
             related_raw = demo_related_queries(seed)
 
     try:
-        result = classify_lifecycle(classify_data)
+        lifecycle_results = classify_lifecycle_windows(series_by_window)
+        result = lifecycle_results.get("days30") or classify_lifecycle(classify_data)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al clasificar: {e}") from e
 
     try:
-        analytics, forecast = analyze_all_windows(
+        analytics, forecast, forecast_by_window = analyze_all_windows(
             series_by_window,
             trend_context={
                 "title": req.title,
@@ -169,6 +175,13 @@ def analyze(req: AnalyzeRequest):
                 "metrics": result.metrics,
                 "relatedQueries": related_raw,
                 "geo": req.geo,
+            },
+            lifecycle_context_by_window={
+                key: {
+                    "stage": window_result.stage,
+                    "metrics": window_result.metrics,
+                }
+                for key, window_result in lifecycle_results.items()
             },
         )
     except Exception as e:
@@ -193,10 +206,22 @@ def analyze(req: AnalyzeRequest):
         "color": STAGE_COLORS[result.stage],
         "metrics": result.metrics,
         "stageScores": result.stage_scores,
+        "lifecycleByWindow": {
+            key: {
+                "stage": window_result.stage,
+                "confidence": window_result.confidence,
+                "description": window_result.description,
+                "color": STAGE_COLORS[window_result.stage],
+                "metrics": window_result.metrics,
+                "stageScores": window_result.stage_scores,
+            }
+            for key, window_result in lifecycle_results.items()
+        },
         "timeline": timeline,
         "dataUntil": data_until,
         "analytics": analytics,
         "forecast": forecast,
+        "forecastByWindow": forecast_by_window,
         "productCurveType": product_curve["curveType"],
         "productCurveModel": product_curve["modelName"],
         "productCurveFitError": product_curve["fitError"],

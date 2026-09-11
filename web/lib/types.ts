@@ -127,6 +127,27 @@ export interface ProphetForecast {
   seasonality: ProphetSeasonalityComponent[];
 }
 
+export interface LifecycleMetrics {
+  avg_interest: number;
+  avg_recent: number;
+  avg_early: number;
+  max_interest: number;
+  growth_ratio: number;
+  slope_recent: number;
+  peak_position: number;
+  volatility: number;
+  days_analyzed: number;
+}
+
+export interface WindowLifecycle {
+  stage: LifecycleStage;
+  confidence: number;
+  description: string;
+  color: string;
+  metrics: LifecycleMetrics;
+  stageScores: Record<string, number>;
+}
+
 export interface AnalyzeResponse {
   keywords: string[];
   reasoning: string;
@@ -136,21 +157,13 @@ export interface AnalyzeResponse {
   description: string;
   color: string;
   dataUntil: string;
-  metrics: {
-    avg_interest: number;
-    avg_recent: number;
-    avg_early: number;
-    max_interest: number;
-    growth_ratio: number;
-    slope_recent: number;
-    peak_position: number;
-    volatility: number;
-    days_analyzed: number;
-  };
+  metrics: LifecycleMetrics;
   stageScores: Record<string, number>;
+  lifecycleByWindow?: Partial<Record<CurveKey, WindowLifecycle>>;
   timeline: TimelinePoint[];
   analytics: Partial<Record<CurveKey, WindowAnalytics>>;
   forecast: WindowForecast | null;
+  forecastByWindow?: Partial<Record<CurveKey, WindowForecast>>;
   productCurveType?: ProductCurveType;
   productCurveModel?: LifecycleModelName;
   productCurveFitError?: number | null;

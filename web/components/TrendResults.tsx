@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { BrandStrategySection } from "./BrandStrategySection";
 import { DeepDiveSection } from "./DeepDiveSection";
@@ -23,6 +23,25 @@ interface TrendResultsProps {
 export function TrendResults({ result, title, geo = "ES" }: TrendResultsProps) {
   const [activeWindow, setActiveWindow] = useState<CurveKey>("days7");
   const resultsRef = useRef<HTMLDivElement>(null);
+  const activeLifecycle = result.lifecycleByWindow?.[activeWindow];
+  const activeForecast = result.forecastByWindow?.[activeWindow] ?? result.forecast;
+  const activeResult = useMemo<AnalyzeResponse>(() => {
+    if (!activeLifecycle && activeForecast === result.forecast) return result;
+    return {
+      ...result,
+      ...(activeLifecycle
+        ? {
+            stage: activeLifecycle.stage,
+            confidence: activeLifecycle.confidence,
+            description: activeLifecycle.description,
+            color: activeLifecycle.color,
+            metrics: activeLifecycle.metrics,
+            stageScores: activeLifecycle.stageScores,
+          }
+        : {}),
+      forecast: activeForecast,
+    };
+  }, [activeForecast, activeLifecycle, result]);
 
   useEffect(() => {
     resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -43,8 +62,6 @@ export function TrendResults({ result, title, geo = "ES" }: TrendResultsProps) {
     URL.revokeObjectURL(url);
   }
 
-  const forecast = result.forecast;
-
   return (
     <div ref={resultsRef} className="space-y-4">
       {result.demoMode && (
@@ -53,50 +70,55 @@ export function TrendResults({ result, title, geo = "ES" }: TrendResultsProps) {
           sintética para que puedas probar el flujo completo.
         </div>
       )}
-      <SimplifiedModelsBar result={result} />
+      <SimplifiedModelsBar result={activeResult} />
 
-      <VerdictHeader result={result}>
+      <VerdictHeader result={activeResult} activeWindow={activeWindow}>
         <TrendChart
           timeline={result.timeline}
           analytics={result.analytics}
-          forecast={forecast}
+          forecast={activeForecast}
           dataUntil={result.dataUntil}
           active={activeWindow}
           onActiveChange={setActiveWindow}
         />
         <div className="mt-3 space-y-3">
           <QuickSignals activeWindow={activeWindow} analytics={result.analytics} />
-          {forecast?.method === "prophet" && (
+          {activeForecast?.method === "prophet" && (
             <p className="text-xs leading-[18px] text-[var(--hack-text-muted)]">
-              {forecast.label}
-              {forecast.hasSeasonality && " · estacionalidad detectada"}
+              {activeForecast.label}
+              {activeForecast.hasSeasonality && " · estacionalidad detectada"}
             </p>
           )}
-          {forecast?.method === "lifecycle_curve" && forecast.modelName && (
+          {activeForecast?.method === "lifecycle_curve" && activeForecast.modelName && (
             <p className="text-xs leading-[18px] text-[var(--hack-text-muted)]">
               Modelo:{" "}
               <strong className="text-[var(--hack-text-secondary)]">
-                {LIFECYCLE_MODEL_LABELS[forecast.modelName]}
+                {LIFECYCLE_MODEL_LABELS[activeForecast.modelName]}
               </strong>
-              {forecast.curveType && <> · curva {forecast.curveType}</>}
-              {forecast.fitError != null && <> · RMSE {forecast.fitError}</>}
+              {activeForecast.curveType && <> · curva {activeForecast.curveType}</>}
+              {activeForecast.fitError != null && <> · RMSE {activeForecast.fitError}</>}
             </p>
           )}
-          {forecast?.method === "pytrends" && forecast.risingQuery && (
+          {activeForecast?.method === "pytrends" && activeForecast.risingQuery && (
             <p className="text-xs leading-[18px] text-[var(--hack-text-muted)]">
               Proyección ajustada con rising query de Trends:{" "}
               <strong className="text-[var(--hack-text-secondary)]">
-                {forecast.risingQuery}
+                {activeForecast.risingQuery}
               </strong>
             </p>
           )}
-          {forecast?.method === "prophet" && forecast.seasonality.length > 0 && (
-            <ProphetSeasonalityCharts components={forecast.seasonality} />
+          {activeForecast?.method === "prophet" && activeForecast.seasonality.length > 0 && (
+            <ProphetSeasonalityCharts components={activeForecast.seasonality} />
           )}
         </div>
       </VerdictHeader>
 
-      <BrandStrategySection result={result} trendTitle={title} geo={geo} />
+      <BrandStrategySection
+        key={activeWindow}
+        result={activeResult}
+        trendTitle={title}
+        geo={geo}
+      />
 
       <DeepDiveSection
         title="Más detalle"
@@ -104,8 +126,8 @@ export function TrendResults({ result, title, geo = "ES" }: TrendResultsProps) {
         defaultOpen={false}
       >
         <div className="space-y-4">
-          <LifecycleContextTabs result={result} />
-          <TheoreticalModelsPanel result={result} />
+          <LifecycleContextTabs result={activeResult} />
+          <TheoreticalModelsPanel result={activeResult} />
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-[var(--hack-text-muted)]">

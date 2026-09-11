@@ -395,7 +395,7 @@ def _build_forecast(
     prophet = _try_prophet(series, periods)
     if prophet:
         label = prophet.get("label") or f"Prophet · proyección a {periods} días"
-        return {
+        forecast = {
             "method": "prophet",
             "hasSeasonality": prophet["hasSeasonality"],
             "forecastDays": periods,
@@ -404,8 +404,40 @@ def _build_forecast(
             "seasonality": prophet["seasonality"],
             "label": label,
         }
+        return _enforce_stage_consistency(forecast, series, trend_context)
 
-    return build_forecast(series, periods, trend_context)
+    forecast = build_forecast(series, periods, trend_context)
+    return _enforce_stage_consistency(forecast, series, trend_context)
+
+
+def _enforce_stage_consistency(
+    forecast: dict | None,
+    series: pd.Series,
+    trend_context: dict[str, Any] | None,
+) -> dict | None:
+    """Prevent a declining window from projecting an unsupported rebound."""
+    if not forecast or (trend_context or {}).get("stage") != "En declive":
+        return forecast
+
+    ceiling = max(float(series.dropna().iloc[-1]), 0.0)
+    adjusted = {**forecast, "timeline": []}
+    for point in forecast.get("timeline", []):
+        row = dict(point)
+        prediction = min(max(float(row.get("forecast") or 0), 0.0), ceiling)
+        upper = min(max(float(row.get("upper") or prediction), prediction), ceiling)
+        lower = min(max(float(row.get("lower") or 0), 0.0), prediction)
+        row.update(
+            {
+                "forecast": round(prediction, 2),
+                "lower": round(lower, 2),
+                "upper": round(upper, 2),
+            }
+        )
+        adjusted["timeline"].append(row)
+        ceiling = prediction
+
+    adjusted["label"] = f"{forecast.get('label', 'Proyección')} · ajustada al declive observado"
+    return adjusted
 
 
 def _select_training_series(series_by_window: dict[str, pd.Series]) -> pd.Series | None:
@@ -440,17 +472,28 @@ def analyze_series(series: pd.Series, window_key: str) -> dict | None:
 def analyze_all_windows(
     series_by_window: dict[str, pd.Series],
     trend_context: dict | None = None,
-) -> tuple[dict, dict | None]:
+    lifecycle_context_by_window: dict[str, dict] | None = None,
+) -> tuple[dict, dict | None, dict[str, dict]]:
     analytics: dict = {}
+    forecasts: dict[str, dict] = {}
     for key, series in series_by_window.items():
         result = analyze_series(series, key)
         if result:
             analytics[key] = result
+        if series is None or len(series) < 5:
+            continue
+        context = dict(trend_context or {})
+        context.update((lifecycle_context_by_window or {}).get(key, {}))
+        window_forecast = _build_forecast(
+            series,
+            PROPHET_FORECAST_DAYS,
+            context,
+        )
+        if window_forecast:
+            forecasts[key] = window_forecast
 
-    train = _select_training_series(series_by_window)
-    forecast = (
-        _build_forecast(train, PROPHET_FORECAST_DAYS, trend_context)
-        if train is not None
-        else None
-    )
-    return analytics, forecast
+    # Keep the 30-day result as the backward-compatible default.
+    forecast = forecasts.get("days30")
+    if forecast is None:
+        forecast = next(iter(forecasts.values()), None)
+    return analytics, forecast, forecasts
