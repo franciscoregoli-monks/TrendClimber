@@ -1,5 +1,7 @@
 """FastAPI backend for TrendClimber — wraps existing Python modules."""
 
+import logging
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,6 +17,8 @@ from src.demo_trends import build_demo_multi_window, demo_related_queries
 from src.trends_fetcher import extract_related_terms, fetch_multi_window_curves, fetch_related_queries
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="TrendClimber API", version="1.0.0")
 
@@ -114,9 +118,14 @@ def analyze(req: AnalyzeRequest):
             related_note = (
                 f" Related queries (Trends) para «{seed}»: {', '.join(related_terms)}."
             )
+        else:
+            # Trends answered, it simply has no related searches for this seed.
+            related_note = f" Trends no devolvió related queries para «{seed}»."
+            logger.info("Sin related queries para «%s» (geo=%s)", seed, req.geo)
     except Exception as e:
         related_terms = []
-        related_note = f" Related queries no disponibles: {e}"
+        related_note = f" Related queries no disponibles ({type(e).__name__})."
+        logger.warning("fetch_related_queries falló para «%s»: %s", seed, e, exc_info=True)
 
     # 2. Generación/selección de las 3 keywords definitivas con Gemini a partir de datos reales
     try:

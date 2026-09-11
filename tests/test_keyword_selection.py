@@ -137,6 +137,36 @@ class KeywordSelectionTests(unittest.TestCase):
             self.assertEqual(keywords[1], "tiktok seo")
             self.assertIn("Keywords derivadas del título", reasoning)
 
+    def test_missing_api_key_is_reported_in_reasoning(self):
+        with patch.dict("os.environ", {"GOOGLE_API_KEY": ""}):
+            _, reasoning = generate_keywords(
+                title="social search",
+                description="Búsquedas directas en TikTok e Instagram",
+            )
+
+        self.assertIn("Selección sin Gemini", reasoning)
+        self.assertIn("GOOGLE_API_KEY", reasoning)
+
+    def test_gemini_failure_reports_type_without_leaking_detail(self):
+        model = Mock()
+        model.generate_content.side_effect = TimeoutError(
+            "https://generativelanguage.googleapis.com/?key=super-secret"
+        )
+
+        with (
+            patch.dict("os.environ", {"GOOGLE_API_KEY": "test-key"}),
+            patch("src.keyword_generator._get_model", return_value=model),
+        ):
+            keywords, reasoning = generate_keywords(
+                title="social search",
+                description="Búsquedas directas en TikTok e Instagram",
+                related_terms=["busquedas en tiktok"],
+            )
+
+        self.assertEqual(keywords[0], "social search")
+        self.assertIn("Gemini no respondió (TimeoutError)", reasoning)
+        self.assertNotIn("super-secret", reasoning)
+
 
 if __name__ == "__main__":
     unittest.main()

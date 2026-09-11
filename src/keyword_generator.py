@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 
@@ -10,6 +11,10 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
+
+MISSING_KEY_REASON = "falta GOOGLE_API_KEY en el entorno, no se consultó a Gemini"
 
 LIFECYCLE_STAGES = [
     "Naciente",
@@ -186,7 +191,14 @@ def _fallback_keywords(
     description: str,
     extra: list[str] | None = None,
     related_terms: list[str] | None = None,
+    *,
+    reason: str = "",
 ) -> tuple[list[str], str]:
+    """Deterministic selection used when Gemini is unavailable.
+
+    `reason` is surfaced to the caller so the UI never presents a degraded
+    selection as if the model had chosen it.
+    """
     keywords = select_analysis_keywords(
         title,
         description,
@@ -196,11 +208,14 @@ def _fallback_keywords(
     related_note = ""
     if related_terms:
         related_note = f" Related queries usadas: {', '.join(related_terms[:4])}."
-    return keywords, (
+    reasoning = (
         f"Keywords derivadas del título «{title.strip()}»"
         f"{' y de Google Trends' if related_terms else ''}."
         f"{related_note}"
     )
+    if reason:
+        reasoning = f"{reasoning} Selección sin Gemini: {reason}."
+    return keywords, reasoning
 
 
 def generate_keywords(
@@ -222,7 +237,18 @@ def generate_keywords(
     related_terms = [item.strip() for item in (related_terms or []) if item.strip()]
 
     if not os.getenv("GOOGLE_API_KEY"):
-        return _fallback_keywords(title, description, extra=extra, related_terms=related_terms)
+        logger.warning(
+            "GOOGLE_API_KEY ausente: keywords para «%s» seleccionadas sin Gemini. "
+            "Copia .env.example a .env y agrega tu clave de Google AI Studio.",
+            title.strip(),
+        )
+        return _fallback_keywords(
+            title,
+            description,
+            extra=extra,
+            related_terms=related_terms,
+            reason=MISSING_KEY_REASON,
+        )
 
     related_block = "\n".join(f"- {term}" for term in related_terms) or "- (sin related queries)"
     manual_block = "\n".join(f"- {term}" for term in extra) or "- (sin keywords manuales)"
@@ -254,5 +280,19 @@ def generate_keywords(
                 f"{', '.join(related_terms)}."
             ).strip()
         return keywords, reasoning
-    except Exception:
-        return _fallback_keywords(title, description, extra=extra, related_terms=related_terms)
+    except Exception as exc:
+        # Full detail stays in the server log; the client only sees the type so
+        # request URLs and credentials never reach the response body.
+        logger.warning(
+            "Gemini no pudo generar keywords para «%s»: %s",
+            title.strip(),
+            exc,
+            exc_info=True,
+        )
+        return _fallback_keywords(
+            title,
+            description,
+            extra=extra,
+            related_terms=related_terms,
+            reason=f"Gemini no respondió ({type(exc).__name__})",
+        )
