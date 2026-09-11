@@ -91,6 +91,7 @@ class KeywordSelectionTests(unittest.TestCase):
         self.assertFalse(
             is_contextually_relevant_keyword("muerte", "muerte Jorge Messi")
         )
+        self.assertTrue(is_contextually_relevant_keyword("n8n", "agentes IA"))
 
     def test_gemini_rejection_is_not_refilled_from_raw_related_queries(self):
         response = type(
@@ -103,12 +104,10 @@ class KeywordSelectionTests(unittest.TestCase):
                 )
             },
         )()
-        model = Mock()
-        model.generate_content.return_value = response
 
         with (
             patch.dict("os.environ", {"GOOGLE_API_KEY": "test-key"}),
-            patch("src.keyword_generator._get_model", return_value=model),
+            patch("src.keyword_generator.generate_gemini_content", return_value=response),
         ):
             keywords, reasoning = generate_keywords(
                 title="muerte Jorge Messi",
@@ -148,14 +147,14 @@ class KeywordSelectionTests(unittest.TestCase):
         self.assertIn("GOOGLE_API_KEY", reasoning)
 
     def test_gemini_failure_reports_type_without_leaking_detail(self):
-        model = Mock()
-        model.generate_content.side_effect = TimeoutError(
-            "https://generativelanguage.googleapis.com/?key=super-secret"
-        )
-
         with (
             patch.dict("os.environ", {"GOOGLE_API_KEY": "test-key"}),
-            patch("src.keyword_generator._get_model", return_value=model),
+            patch(
+                "src.keyword_generator.generate_gemini_content",
+                side_effect=TimeoutError(
+                    "https://generativelanguage.googleapis.com/?key=super-secret"
+                ),
+            ),
         ):
             keywords, reasoning = generate_keywords(
                 title="social search",
@@ -166,6 +165,32 @@ class KeywordSelectionTests(unittest.TestCase):
         self.assertEqual(keywords[0], "social search")
         self.assertIn("Gemini no respondió (TimeoutError)", reasoning)
         self.assertNotIn("super-secret", reasoning)
+
+    def test_model_chain_tries_next_candidate_after_quota_error(self):
+        ok = type("Response", (), {"text": '{"keywords":["agentes IA"],"reasoning":"ok"}'})()
+        calls: list[str] = []
+
+        def fake_get_model(name: str | None = None):
+            model = Mock()
+            if name == "gemini-flash-lite-latest":
+                model.generate_content.side_effect = RuntimeError("limit: 0")
+            else:
+                model.generate_content.return_value = ok
+            calls.append(name or "")
+            return model
+
+        env = {"GOOGLE_API_KEY": "test-key"}
+        with (
+            patch.dict("os.environ", env, clear=False),
+            patch.dict("os.environ", {"GEMINI_MODEL": ""}, clear=False),
+            patch("src.keyword_generator._get_model", side_effect=fake_get_model),
+        ):
+            from src.keyword_generator import generate_gemini_content
+
+            generate_gemini_content("prompt")
+
+        self.assertEqual(calls[0], "gemini-flash-lite-latest")
+        self.assertGreaterEqual(len(calls), 2)
 
 
 if __name__ == "__main__":

@@ -16,6 +16,18 @@ logger = logging.getLogger(__name__)
 
 MISSING_KEY_REASON = "falta GOOGLE_API_KEY en el entorno, no se consultó a Gemini"
 
+# `gemini-pro-latest` resolves to a model with no free-tier quota (limit: 0),
+# so the default chain starts with the flash tier and degrades from there.
+MODEL_CANDIDATES = (
+    "gemini-flash-lite-latest",
+    "gemini-flash-latest",
+    "gemini-3-flash-preview",
+)
+
+# The gRPC layer retries RESOURCE_EXHAUSTED with backoff for minutes, which would
+# stall /analyze. Fail fast instead and let the candidate chain do the retrying.
+GEMINI_REQUEST_OPTIONS = {"timeout": 20, "retry": None}
+
 LIFECYCLE_STAGES = [
     "Naciente",
     "Emergente",
@@ -92,7 +104,7 @@ Responde SOLO con un JSON válido:
 """
 
 
-def _get_model():
+def _get_model(model_name: str | None = None):
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise ValueError(
@@ -100,7 +112,31 @@ def _get_model():
             "Crea un archivo .env con tu clave de Google AI Studio."
         )
     genai.configure(api_key=api_key)
-    return genai.GenerativeModel("gemini-pro-latest")
+    return genai.GenerativeModel(model_name or _model_candidates()[0])
+
+
+def _model_candidates() -> list[str]:
+    """Models to try in order. `GEMINI_MODEL` pins a single one."""
+    configured = os.getenv("GEMINI_MODEL", "").strip()
+    if configured:
+        return [configured]
+    return list(MODEL_CANDIDATES)
+
+
+def generate_gemini_content(prompt: str):
+    """Call Gemini, walking the free-tier chain if a candidate has no quota."""
+    last_error: Exception | None = None
+    for model_name in _model_candidates():
+        try:
+            model = _get_model(model_name)
+            return model.generate_content(
+                prompt,
+                request_options=GEMINI_REQUEST_OPTIONS,
+            )
+        except Exception as exc:
+            last_error = exc
+            logger.warning("Gemini (%s) falló: %s", model_name, exc)
+    raise last_error or RuntimeError("Gemini no respondió")
 
 
 def _parse_json_response(text: str) -> dict:
@@ -132,10 +168,11 @@ def is_contextually_relevant_keyword(value: str, title: str) -> bool:
         return False
     if _normalize(value) == _normalize(title):
         return True
-    # For a multi-word trend, a generated single word usually loses the entity
-    # or phenomenon that makes the search relevant (e.g. "muerte Jorge Messi" -> "muerte").
+    # A one-word fragment of a multi-word title (e.g. "muerte" from
+    # "muerte Jorge Messi") is too broad. Distinctive related queries that
+    # are not title fragments (e.g. "n8n" for "agentes IA") stay.
     if len(title_tokens) >= 2 and len(candidate_tokens) == 1:
-        return False
+        return candidate_tokens[0] not in title_tokens
     return True
 
 
@@ -253,19 +290,21 @@ def generate_keywords(
     related_block = "\n".join(f"- {term}" for term in related_terms) or "- (sin related queries)"
     manual_block = "\n".join(f"- {term}" for term in extra) or "- (sin keywords manuales)"
 
+    prompt = KEYWORD_PROMPT.format(
+        title=title,
+        description=description,
+        geo_label=geo_label,
+        manual_block=manual_block,
+        related_block=related_block,
+        max_keywords=MAX_KEYWORDS,
+    )
+
     try:
-        model = _get_model()
-        prompt = KEYWORD_PROMPT.format(
-            title=title,
-            description=description,
-            geo_label=geo_label,
-            manual_block=manual_block,
-            related_block=related_block,
-            max_keywords=MAX_KEYWORDS,
-        )
-        response = model.generate_content(prompt)
+        response = generate_gemini_content(prompt)
         parsed = _parse_json_response(response.text)
-        ranked = [str(item).strip() for item in parsed.get("keywords", []) if str(item).strip()]
+        ranked = [
+            str(item).strip() for item in parsed.get("keywords", []) if str(item).strip()
+        ]
         keywords = select_analysis_keywords(
             title,
             description,

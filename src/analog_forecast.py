@@ -9,7 +9,7 @@ from typing import Any, TypedDict
 import numpy as np
 import pandas as pd
 
-from src.keyword_generator import _get_model, _parse_json_response
+from src.keyword_generator import generate_gemini_content, _parse_json_response
 from src.trends_fetcher import fetch_interest_over_time, today_date
 
 logger = logging.getLogger(__name__)
@@ -151,7 +151,6 @@ def find_analog_trends(
     recent_series: pd.Series,
 ) -> AnalogTrend | None:
     try:
-        model = _get_model()
         prompt = ANALOG_PROMPT.format(
             title=title,
             description=description,
@@ -162,7 +161,7 @@ def find_analog_trends(
             volatility=metrics.get("volatility", "n/a"),
             recent_shape=_describe_recent_shape(recent_series),
         )
-        response = model.generate_content(prompt)
+        response = generate_gemini_content(prompt)
         parsed = _parse_json_response(response.text)
         analogs = parsed.get("analogs") or []
         if not analogs:

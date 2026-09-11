@@ -8,7 +8,7 @@ from typing import Any, Literal, TypedDict
 
 from dotenv import load_dotenv
 
-from src.keyword_generator import _get_model, _parse_json_response
+from src.keyword_generator import generate_gemini_content, _parse_json_response
 
 load_dotenv()
 
@@ -644,7 +644,6 @@ def generate_brand_strategy(
     baseline = _compute_baseline(brand, trend)
 
     try:
-        model = _get_model()
         prompt = STRATEGY_PROMPT.format(
             brand_json=json.dumps(brand, ensure_ascii=False, indent=2),
             trend_json=json.dumps(trend, ensure_ascii=False, indent=2),
@@ -660,7 +659,7 @@ def generate_brand_strategy(
                 indent=2,
             ),
         )
-        response = model.generate_content(prompt)
+        response = generate_gemini_content(prompt)
         parsed = _parse_json_response(response.text)
         return _validate_gemini_payload(parsed, brand, trend, baseline)
     except Exception:
