@@ -25,9 +25,6 @@ function y(v: number) {
   return PAD.top + (1 - v) * IH;
 }
 
-function curveBell(t: number) {
-  return Math.exp(-Math.pow((t - 0.5) / 0.22, 2));
-}
 function curveFad(t: number) {
   return Math.exp(-Math.pow((t - 0.12) / 0.06, 2));
 }
@@ -60,9 +57,11 @@ export function SimplifiedModelsBar({ result }: { result: AnalyzeResponse }) {
   const fashionStage = mapToFashionCycle(result.stage);
   const fashionMeta = getFashionCycleStageMeta(fashionStage);
   const markerX = getFashionCycleMarkerPosition(result.stage);
-  const markerY = curveBell(markerX);
   const productType = resolveProductCurveType(result);
   const productLabel = PRODUCT_CURVE_TYPES.find((p) => p.id === productType)?.label;
+  // Draw the detected curve so the stage marker sits on the real shape.
+  const trendCurve = CURVES[productType];
+  const markerY = trendCurve(markerX);
 
   return (
     <div className="grid gap-3 sm:grid-cols-2">
@@ -81,7 +80,7 @@ export function SimplifiedModelsBar({ result }: { result: AnalyzeResponse }) {
               fill={z.id === fashionStage ? "#0071e322" : "#00000006"}
             />
           ))}
-          <path d={miniPath(curveBell)} fill="none" stroke="#1d1d1f" strokeWidth={2} />
+          <path d={miniPath(trendCurve)} fill="none" stroke="#1d1d1f" strokeWidth={2} />
           <circle cx={x(markerX)} cy={y(markerY)} r={4} fill="#0071e3" />
           {FASHION_CYCLE_STAGES.map((zone) => (
             <text
