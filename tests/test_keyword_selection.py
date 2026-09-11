@@ -1,8 +1,9 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from src.keyword_generator import (
     generate_keywords,
+    is_contextually_relevant_keyword,
     is_generic_keyword,
     select_analysis_keywords,
 )
@@ -73,6 +74,54 @@ class KeywordSelectionTests(unittest.TestCase):
         self.assertTrue(is_generic_keyword("viral"))
         self.assertTrue(is_generic_keyword("sobre"))
         self.assertFalse(is_generic_keyword("farmear aura qué es"))
+
+    def test_rejects_single_word_that_loses_trend_context(self):
+        keywords = select_analysis_keywords(
+            "muerte Jorge Messi",
+            ranked_candidates=[
+                "muerte Jorge Messi",
+                "fallecimiento Jorge Messi",
+                "muerte",
+            ],
+        )
+        self.assertEqual(
+            keywords,
+            ["muerte Jorge Messi", "fallecimiento Jorge Messi"],
+        )
+        self.assertFalse(
+            is_contextually_relevant_keyword("muerte", "muerte Jorge Messi")
+        )
+
+    def test_gemini_rejection_is_not_refilled_from_raw_related_queries(self):
+        response = type(
+            "Response",
+            (),
+            {
+                "text": (
+                    '{"keywords":["muerte Jorge Messi","fallecimiento Jorge Messi"],'
+                    '"reasoning":"Se descartó muerte porque es demasiado amplia."}'
+                )
+            },
+        )()
+        model = Mock()
+        model.generate_content.return_value = response
+
+        with (
+            patch.dict("os.environ", {"GOOGLE_API_KEY": "test-key"}),
+            patch("src.keyword_generator._get_model", return_value=model),
+        ):
+            keywords, reasoning = generate_keywords(
+                title="muerte Jorge Messi",
+                description="Noticias sobre el fallecimiento del padre de Lionel Messi",
+                related_terms=["muerte", "últimas muertes", "Jorge Messi"],
+            )
+
+        self.assertEqual(
+            keywords,
+            ["muerte Jorge Messi", "fallecimiento Jorge Messi"],
+        )
+        self.assertNotIn("muerte", keywords[1:])
+        self.assertIn("descartó muerte", reasoning)
 
     def test_generate_keywords_fallback_flow(self):
         with patch.dict("os.environ", {"GOOGLE_API_KEY": ""}):

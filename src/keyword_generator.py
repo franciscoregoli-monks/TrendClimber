@@ -60,25 +60,30 @@ GENERIC_TERMS = frozenset(
 
 KEYWORD_PROMPT = """Eres un analista de tendencias digitales y marketing cultural.
 
-El usuario describe una tendencia. Debes elegir exactamente {max_keywords} keywords
+El usuario describe una tendencia. Debes elegir entre 1 y {max_keywords} keywords
 que la gente buscaría hoy en Google para este fenómeno.
 
 Título de la tendencia: {title}
 Descripción: {description}
 País/región de interés: {geo_label}
+Keywords manuales del usuario (consérvalas solo si son relevantes):
+{manual_block}
 Related queries de Google Trends (prioridad alta, términos reales de búsqueda):
 {related_block}
 
 Reglas:
-- Devuelve exactamente {max_keywords} keywords.
+- Devuelve como máximo {max_keywords} keywords. No completes el cupo con términos irrelevantes.
 - La primera keyword DEBE ser el título de la tendencia (o una forma de búsqueda equivalente).
-- Completá el resto priorizando related queries reales (rising primero, después top).
+- Evalúa cada keyword de forma independiente: debe identificar inequívocamente este trend.
+- Rechaza fragmentos demasiado amplios que pierdan la persona, producto, evento o fenómeno
+  identificador. Ejemplo: para "muerte Jorge Messi", "muerte" no es relevante por sí sola.
+- Prioriza keywords manuales relevantes y después related queries reales.
 - Podés reescribir levemente una related query, pero no inventes términos genéricos.
 - Evita palabras sueltas como "moda", "tendencia", "viral", "sobre", "redes".
 - Español si geo=ES/AR/MX.
 
 Responde SOLO con un JSON válido:
-{{"keywords": ["keyword1", "keyword2", "keyword3"], "reasoning": "breve explicación en 1-2 frases"}}
+{{"keywords": ["keyword1", "keyword2"], "reasoning": "explica brevemente por qué cada término identifica el trend y cuáles descartaste"}}
 """
 
 
@@ -114,11 +119,34 @@ def is_generic_keyword(value: str) -> bool:
     return all(token in GENERIC_TERMS or len(token) < 3 for token in tokens)
 
 
-def _add_keyword(bucket: list[str], value: str, *, allow_generic: bool = False) -> None:
+def is_contextually_relevant_keyword(value: str, title: str) -> bool:
+    """Reject generated fragments that are too broad without the trend context."""
+    candidate_tokens = re.findall(r"[a-záéíóúüñ0-9]+", value.lower())
+    title_tokens = re.findall(r"[a-záéíóúüñ0-9]+", title.lower())
+    if not candidate_tokens:
+        return False
+    if _normalize(value) == _normalize(title):
+        return True
+    # For a multi-word trend, a generated single word usually loses the entity
+    # or phenomenon that makes the search relevant (e.g. "muerte Jorge Messi" -> "muerte").
+    if len(title_tokens) >= 2 and len(candidate_tokens) == 1:
+        return False
+    return True
+
+
+def _add_keyword(
+    bucket: list[str],
+    value: str,
+    *,
+    title: str = "",
+    allow_generic: bool = False,
+) -> None:
     cleaned = re.sub(r"\s+", " ", value.strip())
     if not cleaned or len(cleaned) < 2:
         return
     if not allow_generic and is_generic_keyword(cleaned):
+        return
+    if title and not allow_generic and not is_contextually_relevant_keyword(cleaned, title):
         return
     key = _normalize(cleaned)
     if any(_normalize(existing) == key for existing in bucket):
@@ -134,24 +162,19 @@ def select_analysis_keywords(
     ranked_candidates: list[str] | None = None,
     max_count: int = MAX_KEYWORDS,
 ) -> list[str]:
-    """Pick up to 3 keywords: title, then extras, related queries, then ranked context."""
+    """Pick up to 3 relevant keywords; Gemini-ranked candidates outrank raw related terms."""
     selected: list[str] = []
-    _add_keyword(selected, title, allow_generic=True)
+    _add_keyword(selected, title, title=title, allow_generic=True)
 
-    for source in (extra or [], related_terms or [], ranked_candidates or []):
+    # Explicit user input keeps priority. When Gemini ranked candidates are
+    # available, do not refill the list with raw terms the model rejected.
+    sources = [extra or []]
+    sources.append(ranked_candidates if ranked_candidates is not None else (related_terms or []))
+    for source in sources:
         for term in source:
-            _add_keyword(selected, term)
+            _add_keyword(selected, term, title=title)
             if len(selected) >= max_count:
                 return selected[:max_count]
-
-    words = title.strip().split()
-    if len(words) >= 2:
-        _add_keyword(selected, " ".join(words[:2]))
-
-    for token in re.findall(r"[a-záéíóúüñ0-9]{4,}", (description or "").lower()):
-        _add_keyword(selected, token)
-        if len(selected) >= max_count:
-            break
 
     if not selected and title.strip():
         selected = [title.strip()]
@@ -202,6 +225,7 @@ def generate_keywords(
         return _fallback_keywords(title, description, extra=extra, related_terms=related_terms)
 
     related_block = "\n".join(f"- {term}" for term in related_terms) or "- (sin related queries)"
+    manual_block = "\n".join(f"- {term}" for term in extra) or "- (sin keywords manuales)"
 
     try:
         model = _get_model()
@@ -209,6 +233,7 @@ def generate_keywords(
             title=title,
             description=description,
             geo_label=geo_label,
+            manual_block=manual_block,
             related_block=related_block,
             max_keywords=MAX_KEYWORDS,
         )
@@ -222,8 +247,6 @@ def generate_keywords(
             related_terms=related_terms,
             ranked_candidates=ranked,
         )
-        if len(keywords) < 2:
-            return _fallback_keywords(title, description, extra=extra, related_terms=related_terms)
         reasoning = str(parsed.get("reasoning", "")).strip()
         if related_terms:
             reasoning = (
