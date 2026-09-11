@@ -1,4 +1,4 @@
-"""Fetch Google Trends interest-over-time data via pytrends."""
+"""Fetch Google Trends data via pytrends-modern."""
 
 import hashlib
 import os
@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import numpy as np
 import pandas as pd
-from pytrends.request import TrendReq
+from pytrends_modern import TrendReq
 
 PROPHET_FORECAST_DAYS = 7
 CACHE_TTL_S = 900
@@ -197,8 +197,17 @@ def _https_proxies_from_env() -> list[str]:
     return proxies
 
 
+def _requests_args_from_env() -> dict[str, str]:
+    """Pass an optional custom CA bundle while keeping TLS verification enabled."""
+    ca_bundle = (
+        os.getenv("REQUESTS_CA_BUNDLE", "").strip()
+        or os.getenv("CURL_CA_BUNDLE", "").strip()
+    )
+    return {"verify": ca_bundle} if ca_bundle else {}
+
+
 def _create_pytrend(hl: str = "es-ES") -> TrendReq:
-    """Create a bounded pytrends client, optionally rotating configured proxies."""
+    """Create a bounded modern client, optionally rotating configured proxies."""
     return TrendReq(
         hl=hl,
         tz=360,
@@ -206,6 +215,7 @@ def _create_pytrend(hl: str = "es-ES") -> TrendReq:
         proxies=_https_proxies_from_env(),
         retries=PYTRENDS_RETRIES,
         backoff_factor=PYTRENDS_BACKOFF_FACTOR,
+        requests_args=_requests_args_from_env(),
     )
 
 
@@ -339,7 +349,7 @@ def build_pytrends_forecast(
     """
     Build a forward projection from Google Trends data (interest_over_time + related_queries).
 
-    Uses the recent Trends slope and rising-query momentum from pytrends.related_queries().
+    Uses the recent Trends slope and rising-query momentum from related_queries().
     """
     series = series.sort_index().astype(float)
     if len(series) < 5:
