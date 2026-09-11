@@ -44,6 +44,21 @@ const CURVES: Record<ProductCurveType, (t: number) => number> = {
   basic: curveBasic,
 };
 
+// The cycle panel maps lifecycle *phase*, not calendar time, so its maximum has
+// to land inside the "Pico" zone whatever the curve type is. Only the width and
+// flatness of the top vary: a fad is a narrow spike, a basic product a plateau.
+const PHASE_PEAK = 0.5;
+const PHASE_SHAPE: Record<ProductCurveType, { width: number; power: number }> = {
+  fad: { width: 0.15, power: 2 },
+  fashion: { width: 0.24, power: 2 },
+  basic: { width: 0.34, power: 4 },
+};
+
+function phaseCurve(type: ProductCurveType) {
+  const { width, power } = PHASE_SHAPE[type];
+  return (t: number) => Math.exp(-Math.pow(Math.abs(t - PHASE_PEAK) / width, power));
+}
+
 function miniPath(fn: (t: number) => number) {
   const pts: string[] = [];
   for (let i = 0; i <= 40; i++) {
@@ -59,8 +74,8 @@ export function SimplifiedModelsBar({ result }: { result: AnalyzeResponse }) {
   const markerX = getFashionCycleMarkerPosition(result.stage);
   const productType = resolveProductCurveType(result);
   const productLabel = PRODUCT_CURVE_TYPES.find((p) => p.id === productType)?.label;
-  // Draw the detected curve so the stage marker sits on the real shape.
-  const trendCurve = CURVES[productType];
+  // Keeps the shape tied to the detected type without moving the peak off "Pico".
+  const trendCurve = phaseCurve(productType);
   const markerY = trendCurve(markerX);
 
   return (
