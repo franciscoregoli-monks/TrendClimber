@@ -65,7 +65,11 @@ export function TrendResults({ result, title, geo = "" }: TrendResultsProps) {
           onActiveChange={setActiveWindow}
         />
         <div className="mt-3 space-y-3">
-          <QuickSignals activeWindow={activeWindow} analytics={result.analytics} />
+          <QuickSignals
+            activeWindow={activeWindow}
+            analytics={result.analytics}
+            momentumDirection={result.metrics.momentum_direction}
+          />
           {forecast?.method === "prophet" && (
             <p className="text-xs leading-[18px] text-[var(--hack-text-muted)]">
               {forecast.label}

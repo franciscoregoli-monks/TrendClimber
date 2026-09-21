@@ -6,15 +6,21 @@ import type { AnalyzeResponse, CurveKey } from "@/lib/types";
 interface QuickSignalsProps {
   activeWindow: CurveKey;
   analytics: AnalyzeResponse["analytics"];
+  momentumDirection?: AnalyzeResponse["metrics"]["momentum_direction"];
 }
 
-export function QuickSignals({ activeWindow, analytics }: QuickSignalsProps) {
+export function QuickSignals({
+  activeWindow,
+  analytics,
+  momentumDirection,
+}: QuickSignalsProps) {
   const data = analytics[activeWindow];
   if (!data) return null;
+  const slopeDirection = momentumDirection ?? data.slope.direction;
 
   return (
     <div className="flex flex-wrap gap-2">
-      <SignalChip label="Pendiente" value={SLOPE_ENGLISH[data.slope.direction]} />
+      <SignalChip label="Pendiente" value={SLOPE_ENGLISH[slopeDirection]} />
       <SignalChip label="MM" value={MA_SIGNAL_ENGLISH[data.movingAverage.signal]} />
     </div>
   );

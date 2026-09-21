@@ -153,6 +153,29 @@ class LifecycleClassifierTests(unittest.TestCase):
             [9.0, 9.0],
         )
 
+    def test_rising_stage_does_not_project_a_collapse(self):
+        series = pd.Series(
+            [10.0, 40.0, 70.0],
+            index=pd.date_range("2026-09-19", periods=3, freq="D"),
+        )
+        forecast = {
+            "label": "Weibull (Fad)",
+            "hasSeasonality": False,
+            "timeline": [
+                {"forecast": 100.0, "lower": 80.0, "upper": 100.0},
+                {"forecast": 40.0, "lower": 20.0, "upper": 60.0},
+            ],
+        }
+        adjusted = _align_forecast_with_lifecycle(
+            forecast,
+            series,
+            {"stage": "Emergente", "metrics": {}},
+        )
+        values = [point["forecast"] for point in adjusted["timeline"]]
+        self.assertGreaterEqual(values[0], 70.0)
+        self.assertGreaterEqual(values[1], values[0])
+        self.assertIn("subida", adjusted["label"])
+
     def test_recency_weighting_favours_the_short_horizon(self):
         """A year of high interest that just collapsed must read as declining."""
         values = np.r_[np.full(YEAR_POINTS - 5, 90.0), [60.0, 35.0, 15.0, 8.0, 5.0]]

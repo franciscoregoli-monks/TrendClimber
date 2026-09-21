@@ -410,6 +410,30 @@ def _build_forecast(
     return _align_forecast_with_lifecycle(forecast, series, trend_context)
 
 
+def _hold_or_rise_forecast(forecast: dict, last: float) -> dict:
+    """A rising stage cannot project a Weibull-style collapse after the last point."""
+    timeline = forecast.get("timeline") or []
+    if not timeline:
+        return forecast
+    first = max(float(timeline[0].get("forecast") or 0), 1e-6)
+    scale = last / first
+    floor = last
+    adjusted = {**forecast, "timeline": []}
+    for point in timeline:
+        row = dict(point)
+        raw = max(float(row.get("forecast") or 0) * scale, 0.0)
+        prediction = min(max(raw, floor), 100.0)
+        row["forecast"] = round(prediction, 2)
+        row["lower"] = round(min(max(float(row.get("lower") or 0) * scale, floor), prediction), 2)
+        row["upper"] = round(min(max(float(row.get("upper") or prediction) * scale, prediction), 100.0), 2)
+        adjusted["timeline"].append(row)
+        floor = prediction
+    adjusted["label"] = (
+        f"{forecast.get('label', 'Proyección')} · coherente con la subida observada"
+    )
+    return adjusted
+
+
 def _align_forecast_with_lifecycle(
     forecast: dict | None,
     series: pd.Series,
@@ -430,10 +454,20 @@ def _align_forecast_with_lifecycle(
         )
         <= 0
     )
-    if not clearly_declining or forecast.get("hasSeasonality"):
+    last = max(float(series.dropna().iloc[-1]), 0.0)
+    stage = str(trend_context.get("stage") or "")
+    clearly_rising = stage in {"Emergente", "Crecimiento"}
+
+    if forecast.get("hasSeasonality"):
         return forecast
 
-    ceiling = max(float(series.dropna().iloc[-1]), 0.0)
+    if clearly_rising:
+        return _hold_or_rise_forecast(forecast, last)
+
+    if not clearly_declining:
+        return forecast
+
+    ceiling = last
     adjusted = {**forecast, "timeline": []}
     for point in forecast.get("timeline", []):
         row = dict(point)
