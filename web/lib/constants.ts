@@ -34,8 +34,8 @@ export const STAGE_DESCRIPTIONS: Record<LifecycleStage, string> = {
 };
 
 export const GEO_OPTIONS = [
-  { value: "ES", label: "España", flag: "🇪🇸" },
-  { value: "AR", label: "Argentina", flag: "🇦🇷" },
-  { value: "MX", label: "México", flag: "🇲🇽" },
   { value: "", label: "Global", flag: "🌍" },
+  { value: "AR", label: "Argentina", flag: "🇦🇷" },
+  { value: "ES", label: "España", flag: "🇪🇸" },
+  { value: "MX", label: "México", flag: "🇲🇽" },
 ] as const;

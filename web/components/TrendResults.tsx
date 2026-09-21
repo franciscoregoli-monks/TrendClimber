@@ -20,7 +20,7 @@ interface TrendResultsProps {
   geo?: string;
 }
 
-export function TrendResults({ result, title, geo = "ES" }: TrendResultsProps) {
+export function TrendResults({ result, title, geo = "" }: TrendResultsProps) {
   const [activeWindow, setActiveWindow] = useState<CurveKey>("days7");
   const resultsRef = useRef<HTMLDivElement>(null);
 

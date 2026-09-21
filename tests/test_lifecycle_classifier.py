@@ -76,6 +76,42 @@ class LifecycleClassifierTests(unittest.TestCase):
         self.assertGreater(result.metrics["momentum_30"], 0)
         self.assertNotIn(result.stage, {"Emergente", "Crecimiento"})
 
+    def test_direction_never_contradicts_the_stage(self):
+        """Exhaustive guard: "En declive · Alcista" must be unrepresentable."""
+        rng = np.random.default_rng(20260921)
+        curves: list[np.ndarray] = [
+            # Collapsed spikes that rebound off a near-zero base: the case where
+            # relative acceleration explodes (+800%) at 7% of the peak.
+            np.r_[np.zeros(250), [5, 40, 100, 60, 20, 6, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 6, 9]],
+            np.r_[np.zeros(255), [10, 60, 100, 40, 10, 3, 1, 1, 1, 1, 2, 8, 20, 18]],
+            np.r_[np.zeros(YEAR_POINTS - 7), [1.0, 1.0, 1.0, 6.0, 100.0, 25.0, 2.0]],
+            np.linspace(5.0, 90.0, YEAR_POINTS),
+            np.r_[np.linspace(20.0, 100.0, 180), np.linspace(100.0, 9.0, YEAR_POINTS - 180)],
+            np.r_[np.linspace(2.0, 95.0, YEAR_POINTS - 20), np.full(20, 95.0)],
+        ]
+        for _ in range(200):
+            base = rng.uniform(0, 8, YEAR_POINTS)
+            peak_at = int(rng.integers(20, YEAR_POINTS - 2))
+            base[peak_at] = 100.0
+            width = int(rng.integers(1, 12))
+            for offset in range(1, width):
+                if peak_at + offset < YEAR_POINTS:
+                    base[peak_at + offset] = 100.0 / (offset + 1)
+            curves.append(base)
+
+        for values in curves:
+            result = classify(values)
+            direction = result.metrics["momentum_direction"]
+            self.assertIn(direction, {"bullish", "bearish", "flat"})
+            if direction == "bullish":
+                self.assertIn(
+                    result.stage,
+                    {"Emergente", "Crecimiento"},
+                    f"{result.stage} no puede mostrarse como Alcista",
+                )
+            if result.stage in {"Emergente", "Crecimiento"}:
+                self.assertEqual(direction, "bullish")
+
     def test_stage_and_product_curve_type_stay_coherent(self):
         values = fad_curve()
         result = classify(values)

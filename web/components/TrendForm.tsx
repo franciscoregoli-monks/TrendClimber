@@ -19,7 +19,7 @@ interface TrendFormProps {
 export function TrendForm({ onResultChange }: TrendFormProps) {
   const [title, setTitle] = useState(FEATURED_TREND.trend);
   const [description, setDescription] = useState(FEATURED_TREND.trendDescription ?? "");
-  const [geo, setGeo] = useState("AR");
+  const [geo, setGeo] = useState("");
   const [keywordInput, setKeywordInput] = useState("");
   const [extraKeywords, setExtraKeywords] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -120,7 +120,7 @@ export function TrendForm({ onResultChange }: TrendFormProps) {
 
           <div>
             <label htmlFor="geo" className="hack-label">
-              Región
+              Región de búsqueda
             </label>
             <select
               id="geo"

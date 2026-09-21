@@ -14,26 +14,20 @@ interface VerdictHeaderProps {
   children?: ReactNode;
 }
 
-const NOW_DIRECTION_BAND = 0.15;
-
 /**
- * A linear fit over the last 7 days still slopes up when a spike rose and
- * collapsed inside that window, which contradicts the stage. The headline
- * reports the present-time acceleration the stage is derived from, and only
- * falls back to the fitted slope when that metric is absent.
+ * The direction is derived from the stage server-side, so the headline cannot
+ * contradict the label it sits next to. Only fall back to the fitted slope for
+ * responses produced before that field existed.
  */
 function headlineDirection(result: AnalyzeResponse) {
-  const accelNow = result.metrics.acceleration_now;
-  if (accelNow == null) {
-    return (
+  return (
+    result.metrics.momentum_direction ??
+    (
       result.analytics.days7?.slope ??
       result.analytics.days30?.slope ??
       result.analytics.year?.slope
-    )?.direction;
-  }
-  if (accelNow > NOW_DIRECTION_BAND) return "bullish" as const;
-  if (accelNow < -NOW_DIRECTION_BAND) return "bearish" as const;
-  return "flat" as const;
+    )?.direction
+  );
 }
 
 export function VerdictHeader({ result, children }: VerdictHeaderProps) {

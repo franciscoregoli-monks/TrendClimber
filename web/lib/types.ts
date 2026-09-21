@@ -147,6 +147,7 @@ export interface AnalyzeResponse {
     volatility: number;
     current_to_peak?: number;
   peak_drawdown?: number;
+  momentum_direction?: SlopeDirection;
     peak_age_points?: number;
     acceleration_now?: number;
     acceleration_week?: number;

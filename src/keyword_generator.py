@@ -97,7 +97,7 @@ Reglas:
 - Prioriza keywords manuales relevantes y después related queries reales.
 - Podés reescribir levemente una related query, pero no inventes términos genéricos.
 - Evita palabras sueltas como "moda", "tendencia", "viral", "sobre", "redes".
-- Español si geo=ES/AR/MX.
+- Español si geo=ES/AR/MX. Inglés u otras lenguas locales si geo es Global u otro país.
 
 Responde SOLO con un JSON válido:
 {{"keywords": ["keyword1", "keyword2"], "reasoning": "explica brevemente por qué cada término identifica el trend y cuáles descartaste"}}

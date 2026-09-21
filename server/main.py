@@ -34,7 +34,7 @@ app.add_middleware(
 class AnalyzeRequest(BaseModel):
     title: str = Field(min_length=1)
     description: str = Field(min_length=1)
-    geo: str = "ES"
+    geo: str = ""
     extraKeywords: list[str] = Field(default_factory=list)
 
 
@@ -52,7 +52,7 @@ class BrandProfileRequest(BaseModel):
 class BrandStrategyRequest(BaseModel):
     brand: BrandProfileRequest
     trendTitle: str = Field(min_length=1)
-    geo: str = "ES"
+    geo: str = ""
     analyze: dict
 
 

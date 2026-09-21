@@ -65,6 +65,9 @@ MAX_RISING_DRAWDOWN = 0.35
 DECLINE_DRAWDOWN = 0.5
 RECENT_PEAK_POINTS = 30
 
+# Dead band for calling the present-time move up or down.
+DIRECTION_BAND = 0.15
+
 
 @dataclass
 class LifecycleResult:
@@ -115,6 +118,24 @@ def _velocity(normalized: np.ndarray, points: int) -> float:
 def _relative_change(current: float, baseline: float) -> float:
     """Acceleration of the current level against a slower baseline."""
     return (current - baseline) / max(baseline, 0.02)
+
+
+#: Stages the ladder only reaches when the curve is climbing.
+RISING_STAGES = frozenset({"Emergente", "Crecimiento"})
+
+
+def _direction_for_stage(stage: str, accel_now: float) -> str:
+    """Single source of truth for the direction shown beside the stage.
+
+    Acceleration is relative, so a rebound off a near-zero base explodes (1 -> 9
+    is +800% while still 7% of the peak). Deriving the direction from the stage
+    instead of from the raw metric makes "En declive · Alcista" unrepresentable.
+    """
+    if stage in RISING_STAGES:
+        return "bullish"
+    if accel_now <= -DIRECTION_BAND:
+        return "bearish"
+    return "flat"
 
 
 def _recency_weighted_level(normalized: np.ndarray) -> float:
@@ -233,6 +254,8 @@ def classify_lifecycle(data: pd.DataFrame) -> LifecycleResult:
     else:
         stage = "Naciente"
 
+    momentum_direction = _direction_for_stage(stage, accel_now)
+
     scores[stage] = max(scores[stage], 0.7)
     runner_up = max(value for key, value in scores.items() if key != stage)
     margin = max(scores[stage] - runner_up, 0.0)
@@ -252,6 +275,7 @@ def classify_lifecycle(data: pd.DataFrame) -> LifecycleResult:
         "volatility": round(float(np.std(normalized) * 100), 2),
         "current_to_peak": round(level_now, 3),
         "peak_drawdown": round(drawdown, 3),
+        "momentum_direction": momentum_direction,
         "peak_age_points": peak_age,
         "acceleration_now": round(accel_now, 3),
         "acceleration_week": round(accel_week, 3),
