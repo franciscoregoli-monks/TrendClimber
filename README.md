@@ -2,6 +2,8 @@
 
 Detecta en qué fase está una tendencia antes de que se masifique — keywords con IA + Google Trends.
 
+El desarrollo activo vive en [franciscoregoli-monks/TrendClimber](https://github.com/franciscoregoli-monks/TrendClimber). `main` es la línea de producto. El repo original de Isabella queda como `upstream` histórico y no recibe cambios.
+
 ## Run
 
 ```bash
